@@ -55,55 +55,37 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to create temp dir", http.StatusInternalServerError)
 		return
 	}
-	defer os.RemoveAll(dir)
+	defer os.RemoveAll(dir) // 処理終了時に一時ディレクトリを削除
 	log.Printf("INFO: Created temp directory: %s", dir)
 
-	// 必要なファイルを一時ディレクトリに書き出す
-	// main.cpp
+	// C++コードを一時ディレクトリに書き出す
 	if err := os.WriteFile(filepath.Join(dir, "main.cpp"), []byte(payload.Code), 0666); err != nil {
 		log.Printf("ERROR: Failed to write main.cpp: %v", err)
 		http.Error(w, "Failed to write to temp file", http.StatusInternalServerError)
 		return
 	}
-	// run.sh
-	scriptContent := `#!/bin/sh
-g++ main.cpp -o main.out && ./main.out`
-	if err := os.WriteFile(filepath.Join(dir, "run.sh"), []byte(scriptContent), 0755); err != nil {
-		log.Printf("ERROR: Failed to write run.sh: %v", err)
-		http.Error(w, "Failed to write to script file", http.StatusInternalServerError)
-		return
-	}
-	// Dockerfile
-	dockerfileContent := `FROM gcc:latest
-WORKDIR /usr/src/app
-COPY . .
-RUN chmod +x run.sh
-CMD ["./run.sh"]`
-	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfileContent), 0666); err != nil {
-		log.Printf("ERROR: Failed to write Dockerfile: %v", err)
-		http.Error(w, "Failed to write to dockerfile", http.StatusInternalServerError)
-		return
-	}
 
-	// Dockerイメージをビルドする
-	imageName := fmt.Sprintf("exec-image-%d", time.Now().UnixNano())
-	log.Printf("INFO: Building Docker image: %s", imageName)
-	buildCmd := exec.Command("docker", "build", "-t", imageName, ".")
-	buildCmd.Dir = dir // コマンドの実行ディレクトリを一時ディレクトリに設定
-	if buildOutput, err := buildCmd.CombinedOutput(); err != nil {
-		log.Printf("ERROR: Docker build failed: %v\nOutput: %s", err, string(buildOutput))
-		http.Error(w, "Docker build failed: "+string(buildOutput), http.StatusInternalServerError)
-		return
-	}
-	// 実行後、イメージを削除するように予約
-	defer exec.Command("docker", "rmi", imageName).Run()
+	// --- Docker Build を削除 ---
+	// docker build と docker rmi の処理を削除
 
-	// ビルドしたイメージからコンテナを実行する
+	// --- Docker Run を修正 ---
+	// 10秒間のタイムアウトを設定
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	log.Printf("INFO: Running Docker container from image: %s", imageName)
-	runCmd := exec.CommandContext(ctx, "docker", "run", "--rm", imageName)
+	// コンテナ内で実行するコマンド
+	// /usr/src/app はマウントされたディレクトリ
+	compileAndRunScript := "g++ /usr/src/app/main.cpp -o /usr/src/app/main.out && /usr/src/app/main.out"
+
+	// ホストの一時ディレクトリをコンテナの /usr/src/app にマウントして実行
+	log.Printf("INFO: Running Docker container using volume mount...")
+	runCmd := exec.CommandContext(ctx, "docker", "run",
+		"--rm",                                    // 実行後にコンテナを削除
+		"--net=none",                              // ネットワークを無効化 (セキュリティ向上)
+		"-v", fmt.Sprintf("%s:/usr/src/app", dir), // ボリュームマウント
+		"gcc:latest",                    // ベースイメージを直接指定
+		"sh", "-c", compileAndRunScript, // コンテナで実行するコマンド
+	)
 
 	var out bytes.Buffer
 	var stderr bytes.Buffer
@@ -111,8 +93,17 @@ CMD ["./run.sh"]`
 	runCmd.Stderr = &stderr
 	err = runCmd.Run()
 
+	// タイムアウトの場合
+	if ctx.Err() == context.DeadlineExceeded {
+		log.Println("ERROR: Docker run timed out")
+		http.Error(w, "Execution timed out", http.StatusGatewayTimeout)
+		return
+	}
+
+	// その他の実行エラー（コンパイルエラーなど）
 	if err != nil {
 		log.Printf("ERROR: Docker run failed: %v\nStderr: %s", err, stderr.String())
+		// コンパイルエラーなども stderr に入るので、それをクライアントに返す
 		http.Error(w, "Execution failed: "+stderr.String(), http.StatusInternalServerError)
 		return
 	}

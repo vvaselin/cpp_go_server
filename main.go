@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -252,8 +253,6 @@ func main() {
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("警告: .env ファイルの読み込みに失敗しました。")
-	} else {
-		log.Println(".env ファイルを読み込みました。")
 	}
 
 	loadSystemPrompt()
@@ -264,6 +263,36 @@ func main() {
 	http.Handle("/execute", corsMiddleware(executeHandlerFunc))
 	http.Handle("/api/chat", corsMiddleware(chatHandlerFunc))
 
-	fmt.Println("Go server listening on http://localhost:8088 (serving /execute and /api/chat)")
+	staticDir := "../tyranoedu"
+
+	fs := http.FileServer(http.Dir(staticDir))
+	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// APIルートや存在しないファイルへのリクエストで CORS Middleware が問題を起こすのを防ぐ
+		// Go 1.18+ の any 型相当の簡易チェック
+		if r.Method == "OPTIONS" {
+			corsMiddleware(fs).ServeHTTP(w, r)
+			return
+		}
+
+		// パスが /api/ や /execute で始まらない場合のみファイルサーバーに流す
+		if !strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/execute") {
+			// .env や go.mod など、Goサーバーの重要ファイルにアクセスさせないための基本的な予防
+			// (より厳密には ../ を禁止すべきだが、ティラノの動作に影響する可能性があるため最低限)
+			if strings.Contains(r.URL.Path, ".go") || strings.Contains(r.URL.Path, ".env") || strings.Contains(r.URL.Path, ".mod") {
+				http.NotFound(w, r)
+				return
+			}
+			fs.ServeHTTP(w, r)
+			return
+		}
+
+		// このコードは通常実行されない（上のAPIハンドラで処理されるため）
+		// もし万が一APIルートがここに到達したら 404 を返す
+		http.NotFound(w, r)
+	}))
+
+	fmt.Println("Go server listening on http://localhost:8088")
+	fmt.Println("(Serving APIs: /execute, /api/chat)")
+	fmt.Println("(Serving Static files from: " + staticDir + ")")
 	log.Fatal(http.ListenAndServe(":8088", nil))
 }

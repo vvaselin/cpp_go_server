@@ -259,16 +259,40 @@ func staticFileHandler() http.Handler {
 // HTTP ミドルウェア
 //================================================================
 
-// corsMiddleware はCORS（クロスオリジンリソース共有）ヘッダーをレスポンスに追加
+// 安全のため、許可するアクセス元を .env のIPとlocalhostに限定
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		myIP := os.Getenv("MY_IPV4_ADDRESS")
+		// 許可するオリジン（アクセス元）のリスト
+		allowedOrigins := []string{
+			"http://localhost:8088", // ローカルホスト
+		}
+		if myIP != "" {
+			allowedOrigins = append(allowedOrigins, "http://"+myIP+":8088") // ネットワークIP
+		}
+
+		// リクエストのオリジンを取得
+		origin := r.Header.Get("Origin")
+
+		// 許可リストに存在するオリジンの場合のみヘッダーを設定
+		for _, allowedOrigin := range allowedOrigins {
+			if origin == allowedOrigin {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				break
+			}
+		}
+		// 'Access-Control-Allow-Origin' が設定された場合のみ、他のヘッダーも設定する
+		if w.Header().Get("Access-Control-Allow-Origin") != "" {
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		}
+		// OPTIONSメソッド（プリフライトリクエスト）の場合はここで終了
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		// 次のハンドラ（API本体）を実行
 		next.ServeHTTP(w, r)
 	})
 }

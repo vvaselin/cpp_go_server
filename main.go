@@ -45,7 +45,7 @@ func main() {
 	// --- サーバー起動 ---
 	myIP := os.Getenv("MY_IPV4_ADDRESS")
 	log.Println("Go server listening on:")
-	log.Println("  - http://localhost:8088 (ローカル)")
+	// log.Println("  - http://localhost:8088 (ローカル)")
 
 	if myIP != "" {
 		log.Printf("  - http://%s:8088 (ネットワーク)\n", myIP)
@@ -54,7 +54,7 @@ func main() {
 	}
 
 	log.Println("(Serving APIs: /execute, /api/chat)")
-	log.Println("(Serving Static files from: " + staticDir + ")")
+	// log.Println("(Serving Static files from: " + staticDir + ")")
 
 	// ListenAndServe はエラーを返すため、ログに出力する
 	if err := http.ListenAndServe(":8088", nil); err != nil {

@@ -17,71 +17,56 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Chat用構造体
-type ChatPayload struct {
-	Message string `json:"message"`
-}
+// --- グローバル設定 ---
 
-type OpenAIRequest struct {
-	Model    string          `json:"model"`
-	Messages []OpenAIMessage `json:"messages"`
-}
-
-type OpenAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type OpenAIResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	} `json:"choices"`
-}
-
-type ChatResponse struct {
-	Text string `json:"text"`
-}
-
-// --- システムプロンプトをグローバル変数として読み込む ---
+// systemPrompt はAIチャットで使用するシステムプロンプトです。
 var systemPrompt string
 
-func loadSystemPrompt() {
-	// main.go と同じ階層に prompt.txt を置く想定
-	// --- 修正: ioutil.ReadFile -> os.ReadFile ---
-	content, err := os.ReadFile("./prompt.txt")
-	if err != nil {
-		log.Println("prompt.txtの読み込みに失敗しました。デフォルトのプロンプトを使用します。")
-		systemPrompt = "あなたは親切なAIアシスタントです。"
+// staticDir は配信するティラノスクリプトのプロジェクトディレクトリです。
+const staticDir = "../tyranoedu"
+
+//================================================================
+// サーバー起動処理 (main)
+//================================================================
+
+func main() {
+	// --- 初期化処理 ---
+	loadEnv()
+	loadSystemPrompt()
+
+	// --- ハンドラ（ルーティング）設定 ---
+	// APIルート（静的ファイルより先に登録）
+	http.Handle("/execute", corsMiddleware(http.HandlerFunc(executeHandler)))
+	http.Handle("/api/chat", corsMiddleware(http.HandlerFunc(chatHandler)))
+
+	// 静的ファイル配信ルート（上記以外のすべてのリクエスト）
+	http.Handle("/", staticFileHandler())
+
+	// --- サーバー起動 ---
+	myIP := os.Getenv("MY_IPV4_ADDRESS")
+	log.Println("Go server listening on:")
+	log.Println("  - http://localhost:8088 (ローカル)")
+
+	if myIP != "" {
+		log.Printf("  - http://%s:8088 (ネットワーク)\n", myIP)
 	} else {
-		systemPrompt = string(content)
-		log.Println("prompt.txtを読み込みました。")
+		log.Println("  (ネットワークIPが .env の 'MY_IPV4_ADDRESS' に設定されていません)")
+	}
+
+	log.Println("(Serving APIs: /execute, /api/chat)")
+	log.Println("(Serving Static files from: " + staticDir + ")")
+
+	// ListenAndServe はエラーを返すため、ログに出力する
+	if err := http.ListenAndServe(":8088", nil); err != nil {
+		log.Fatalf("サーバーの起動に失敗しました: %v", err)
 	}
 }
 
-// C++用構造体
-type CodePayload struct {
-	Code string `json:"code"`
-}
-type ResultPayload struct {
-	Result string `json:"result"`
-}
+//================================================================
+// HTTP ハンドラ (各URLの処理本体)
+//================================================================
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// main.go の executeHandler関数をこれに置き換える
+// --- C++実行ハンドラ ---
 func executeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "POST method only", http.StatusMethodNotAllowed)
@@ -90,7 +75,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 
 	var payload CodePayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		log.Printf("ERROR: Invalid JSON received: %v", err)
+		log.Printf("ERROR: Invalid JSON received (execute): %v", err)
 		http.Error(w, "Bad Request: Invalid JSON", http.StatusBadRequest)
 		return
 	}
@@ -102,7 +87,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to create temp dir", http.StatusInternalServerError)
 		return
 	}
-	defer os.RemoveAll(dir) // 処理終了時に一時ディレクトリを削除
+	defer os.RemoveAll(dir)
 	log.Printf("INFO: Created temp directory: %s", dir)
 
 	// C++コードを一時ディレクトリに書き出す
@@ -112,20 +97,18 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- Docker Run を修正 ---
 	// 10秒間のタイムアウトを設定
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// コンテナ内で実行するコマンド
-	// /usr/src/app はマウントされたディレクトリ
 	compileAndRunScript := "g++ /usr/src/app/main.cpp -o /usr/src/app/main.out && /usr/src/app/main.out"
 
 	// ホストの一時ディレクトリをコンテナの /usr/src/app にマウントして実行
 	log.Printf("INFO: Running Docker container using volume mount...")
 	runCmd := exec.CommandContext(ctx, "docker", "run",
 		"--rm",                                    // 実行後にコンテナを削除
-		"--net=none",                              // ネットワークを無効化 (セキュリティ向上)
+		"--net=none",                              // ネットワークを無効化
 		"-v", fmt.Sprintf("%s:/usr/src/app", dir), // ボリュームマウント
 		"gcc:latest",                    // ベースイメージを直接指定
 		"sh", "-c", compileAndRunScript, // コンテナで実行するコマンド
@@ -147,7 +130,6 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	// その他の実行エラー（コンパイルエラーなど）
 	if err != nil {
 		log.Printf("ERROR: Docker run failed: %v\nStderr: %s", err, stderr.String())
-		// コンパイルエラーなども stderr に入るので、それをクライアントに返す
 		http.Error(w, "Execution failed: "+stderr.String(), http.StatusInternalServerError)
 		return
 	}
@@ -159,7 +141,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// --- AIチャット用のハンドラを新しく追加 ---
+// --- AIチャットハンドラ ---
 func chatHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "POST method only", http.StatusMethodNotAllowed)
@@ -186,7 +168,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		{Role: "user", Content: payload.Message},
 	}
 	reqBody := OpenAIRequest{
-		Model:    "gpt-4o-mini", // server.js と同じモデルを指定
+		Model:    "gpt-4o-mini",
 		Messages: reqMessages,
 	}
 
@@ -197,8 +179,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// OpenAI APIへリクエストを送信
-	// タイムアウトを設定 (例: 30秒)
+	// OpenAI APIへリクエストを送信 (30秒タイムアウト)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -221,7 +202,6 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		// --- 修正: ioutil.ReadAll -> io.ReadAll ---
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		log.Printf("ERROR: OpenAI API returned non-200 status: %d %s", resp.StatusCode, string(bodyBytes))
 		http.Error(w, "AI service returned an error", http.StatusBadGateway)
@@ -236,63 +216,131 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- 修正: 「varresponseText」 -> 「responseText」 ---
+	// クライアント（ティラノ）に返すレスポンス
 	responseText := "（応答なし）"
 	if len(openAIResp.Choices) > 0 && openAIResp.Choices[0].Message.Content != "" {
 		responseText = openAIResp.Choices[0].Message.Content
 	}
 
 	response := ChatResponse{Text: responseText}
-
-	// --- 修正: 「w.Header.Set」 -> 「w.Header().Set」 ---
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
-func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("警告: .env ファイルの読み込みに失敗しました。")
-	}
-
-	loadSystemPrompt()
-
-	executeHandlerFunc := http.HandlerFunc(executeHandler)
-	chatHandlerFunc := http.HandlerFunc(chatHandler)
-
-	http.Handle("/execute", corsMiddleware(executeHandlerFunc))
-	http.Handle("/api/chat", corsMiddleware(chatHandlerFunc))
-
-	staticDir := "../tyranoedu"
-
+// --- 静的ファイル配信ハンドラ ---
+func staticFileHandler() http.Handler {
 	fs := http.FileServer(http.Dir(staticDir))
-	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// APIルートや存在しないファイルへのリクエストで CORS Middleware が問題を起こすのを防ぐ
-		// Go 1.18+ の any 型相当の簡易チェック
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// APIルートがここに到達した場合（通常は発生しない）は 404
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/execute") {
+			http.NotFound(w, r)
+			return
+		}
+
+		// セキュリティ: .env や .go ファイルなど、サーバーの内部ファイルへのアクセスを禁止
+		if strings.Contains(r.URL.Path, ".go") || strings.Contains(r.URL.Path, ".env") || strings.Contains(r.URL.Path, ".mod") {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		// CORSのPreflightリクエスト(OPTIONS)に対応
 		if r.Method == "OPTIONS" {
 			corsMiddleware(fs).ServeHTTP(w, r)
 			return
 		}
 
-		// パスが /api/ や /execute で始まらない場合のみファイルサーバーに流す
-		if !strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/execute") {
-			// .env や go.mod など、Goサーバーの重要ファイルにアクセスさせないための基本的な予防
-			// (より厳密には ../ を禁止すべきだが、ティラノの動作に影響する可能性があるため最低限)
-			if strings.Contains(r.URL.Path, ".go") || strings.Contains(r.URL.Path, ".env") || strings.Contains(r.URL.Path, ".mod") {
-				http.NotFound(w, r)
-				return
-			}
-			fs.ServeHTTP(w, r)
+		// ファイルサーバーが処理
+		fs.ServeHTTP(w, r)
+	})
+}
+
+//================================================================
+// HTTP ミドルウェア
+//================================================================
+
+// corsMiddleware はCORS（クロスオリジンリソース共有）ヘッダーをレスポンスに追加
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
 
-		// このコードは通常実行されない（上のAPIハンドラで処理されるため）
-		// もし万が一APIルートがここに到達したら 404 を返す
-		http.NotFound(w, r)
-	}))
+//================================================================
+// 初期化関数
+//================================================================
 
-	fmt.Println("Go server listening on http://localhost:8088")
-	fmt.Println("(Serving APIs: /execute, /api/chat)")
-	fmt.Println("(Serving Static files from: " + staticDir + ")")
-	log.Fatal(http.ListenAndServe(":8088", nil))
+// loadEnv は .env ファイルから環境変数を読み込み
+func loadEnv() {
+	err := godotenv.Load() // .env ファイルを探す
+	if err != nil {
+		log.Println("警告: .env ファイルの読み込みに失敗しました。")
+	}
+}
+
+// loadSystemPrompt は prompt.txt からシステムプロンプトを読み込み、グローバル変数にセット
+func loadSystemPrompt() {
+	content, err := os.ReadFile("./prompt.txt") // main.go と同じ階層
+	if err != nil {
+		log.Println("prompt.txtの読み込みに失敗しました。デフォルトのプロンプトを使用します。")
+		systemPrompt = "あなたは親切なAIアシスタントです。"
+	} else {
+		systemPrompt = string(content)
+	}
+}
+
+//================================================================
+// データ構造体 (Structs)
+//================================================================
+
+// --- C++実行用 ---
+
+// /execute へのリクエストボディ
+type CodePayload struct {
+	Code string `json:"code"`
+}
+
+// /execute からのレスポンスボディ
+type ResultPayload struct {
+	Result string `json:"result"`
+}
+
+// --- AIチャット用 ---
+
+// /api/chat へのリクエストボディ
+type ChatPayload struct {
+	Message string `json:"message"`
+}
+
+// /api/chat からのレスポンスボディ
+type ChatResponse struct {
+	Text string `json:"text"`
+}
+
+// OpenAI API へのリクエストボディ
+type OpenAIRequest struct {
+	Model    string          `json:"model"`
+	Messages []OpenAIMessage `json:"messages"`
+}
+
+// OpenAI API で使用するメッセージ構造体
+type OpenAIMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// OpenAI API からのレスポンスボディ
+type OpenAIResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
 }

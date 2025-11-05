@@ -5,14 +5,61 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
+// Chat用構造体
+type ChatPayload struct {
+	Message string `json:"message"`
+}
+
+type OpenAIRequest struct {
+	Model    string          `json:"model"`
+	Messages []OpenAIMessage `json:"messages"`
+}
+
+type OpenAIMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type OpenAIResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+}
+
+type ChatResponse struct {
+	Text string `json:"text"`
+}
+
+// --- システムプロンプトをグローバル変数として読み込む ---
+var systemPrompt string
+
+func loadSystemPrompt() {
+	// main.go と同じ階層に prompt.txt を置く想定
+	// --- 修正: ioutil.ReadFile -> os.ReadFile ---
+	content, err := os.ReadFile("./prompt.txt")
+	if err != nil {
+		log.Println("prompt.txtの読み込みに失敗しました。デフォルトのプロンプトを使用します。")
+		systemPrompt = "あなたは親切なAIアシスタントです。"
+	} else {
+		systemPrompt = string(content)
+		log.Println("prompt.txtを読み込みました。")
+	}
+}
+
+// C++用構造体
 type CodePayload struct {
 	Code string `json:"code"`
 }
@@ -33,7 +80,6 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// --- メインの処理を修正 ---
 // main.go の executeHandler関数をこれに置き換える
 func executeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -64,9 +110,6 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to write to temp file", http.StatusInternalServerError)
 		return
 	}
-
-	// --- Docker Build を削除 ---
-	// docker build と docker rmi の処理を削除
 
 	// --- Docker Run を修正 ---
 	// 10秒間のタイムアウトを設定
@@ -115,10 +158,112 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// --- AIチャット用のハンドラを新しく追加 ---
+func chatHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "POST method only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload ChatPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Printf("ERROR: Invalid JSON received (chat): %v", err)
+		http.Error(w, "Bad Request: Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		log.Println("ERROR: OPENAI_API_KEY is not set")
+		http.Error(w, "Internal Server Error: API key not configured", http.StatusInternalServerError)
+		return
+	}
+
+	// OpenAI APIへのリクエストボディを作成
+	reqMessages := []OpenAIMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: payload.Message},
+	}
+	reqBody := OpenAIRequest{
+		Model:    "gpt-4o-mini", // server.js と同じモデルを指定
+		Messages: reqMessages,
+	}
+
+	reqBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		log.Printf("ERROR: Failed to marshal OpenAI request: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// OpenAI APIへリクエストを送信
+	// タイムアウトを設定 (例: 30秒)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(reqBytes))
+	if err != nil {
+		log.Printf("ERROR: Failed to create OpenAI request: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("ERROR: Failed to send request to OpenAI: %v", err)
+		http.Error(w, "Failed to communicate with AI", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		// --- 修正: ioutil.ReadAll -> io.ReadAll ---
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		log.Printf("ERROR: OpenAI API returned non-200 status: %d %s", resp.StatusCode, string(bodyBytes))
+		http.Error(w, "AI service returned an error", http.StatusBadGateway)
+		return
+	}
+
+	// レスポンスをパース
+	var openAIResp OpenAIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
+		log.Printf("ERROR: Failed to decode OpenAI response: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// --- 修正: 「varresponseText」 -> 「responseText」 ---
+	responseText := "（応答なし）"
+	if len(openAIResp.Choices) > 0 && openAIResp.Choices[0].Message.Content != "" {
+		responseText = openAIResp.Choices[0].Message.Content
+	}
+
+	response := ChatResponse{Text: responseText}
+
+	// --- 修正: 「w.Header.Set」 -> 「w.Header().Set」 ---
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
 func main() {
-	// (main関数は変更なし)
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("警告: .env ファイルの読み込みに失敗しました。")
+	} else {
+		log.Println(".env ファイルを読み込みました。")
+	}
+
+	loadSystemPrompt()
+
 	executeHandlerFunc := http.HandlerFunc(executeHandler)
+	chatHandlerFunc := http.HandlerFunc(chatHandler)
+
 	http.Handle("/execute", corsMiddleware(executeHandlerFunc))
-	fmt.Println("Go server listening on http://localhost:8088")
+	http.Handle("/api/chat", corsMiddleware(chatHandlerFunc))
+
+	fmt.Println("Go server listening on http://localhost:8088 (serving /execute and /api/chat)")
 	log.Fatal(http.ListenAndServe(":8088", nil))
 }

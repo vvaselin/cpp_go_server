@@ -49,8 +49,6 @@ func main() {
 
 	if myIP != "" {
 		log.Printf("  - http://%s:8088 (ネットワーク)\n", myIP)
-	} else {
-		log.Println("  (ネットワークIPが .env の 'MY_IPV4_ADDRESS' に設定されていません)")
 	}
 
 	log.Println("(Serving APIs: /execute, /api/chat)")

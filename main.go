@@ -45,7 +45,7 @@ func main() {
 	// --- サーバー起動 ---
 	myIP := os.Getenv("MY_IPV4_ADDRESS")
 	log.Println("Go server listening on:")
-	// log.Println("  - http://localhost:8088 (ローカル)")
+	log.Println("  - http://localhost:8088 (ローカル)")
 
 	if myIP != "" {
 		log.Printf("  - http://%s:8088 (ネットワーク)\n", myIP)

@@ -43,13 +43,15 @@ func main() {
 	http.Handle("/", staticFileHandler())
 
 	// --- サーバー起動 ---
-	myIP := os.Getenv("MY_IPV4_ADDRESS")
+	// myIP := os.Getenv("MY_IPV4_ADDRESS")
 	log.Println("Go server listening on:")
 	log.Println("  - http://localhost:8088 (ローカル)")
 
-	if myIP != "" {
-		log.Printf("  - http://%s:8088 (ネットワーク)\n", myIP)
-	}
+	/*
+		if myIP != "" {
+			log.Printf("  - http://%s:8088 (ネットワーク)\n", myIP)
+		}
+	*/
 
 	log.Println("(Serving APIs: /execute, /api/chat)")
 	// log.Println("(Serving Static files from: " + staticDir + ")")
@@ -261,14 +263,16 @@ func staticFileHandler() http.Handler {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-		myIP := os.Getenv("MY_IPV4_ADDRESS")
+		// myIP := os.Getenv("MY_IPV4_ADDRESS")
 		// 許可するオリジン（アクセス元）のリスト
 		allowedOrigins := []string{
 			"http://localhost:8088", // ローカルホスト
 		}
-		if myIP != "" {
-			allowedOrigins = append(allowedOrigins, "http://"+myIP+":8088") // ネットワークIP
-		}
+		/*
+			if myIP != "" {
+				allowedOrigins = append(allowedOrigins, "http://"+myIP+":8088") // ネットワークIP
+			}
+		*/
 
 		// リクエストのオリジンを取得
 		origin := r.Header.Get("Origin")

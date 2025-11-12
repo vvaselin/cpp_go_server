@@ -162,20 +162,16 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullMessage := fmt.Sprintf(
-		"# 課題:\n%s\n\n"+
-			"# 学生のコード:\n```cpp\n%s\n```\n\n"+
-			"# 質問:\n%s",
-		payload.Task,
-		payload.Code,
-		payload.Message,
-	)
-
 	// OpenAI APIへのリクエストボディを作成
 	reqMessages := []OpenAIMessage{
 		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: fullMessage},
+		{Role: "user", Content: fmt.Sprintf(
+			"以下は学生が書いたC++コードです。\n\n```cpp\n%s\n```\n\nこのコードに基づいて次の質問に答えてください。\n\n%s",
+			payload.Code,
+			payload.Message,
+		)},
 	}
+
 	reqBody := OpenAIRequest{
 		Model:    "gpt-4o-mini",
 		Messages: reqMessages,
@@ -353,7 +349,6 @@ type ResultPayload struct {
 type ChatPayload struct {
 	Message string `json:"message"`
 	Code    string `json:"code"`
-	Task    string `json:"task"`
 }
 
 // /api/chat からのレスポンスボディ

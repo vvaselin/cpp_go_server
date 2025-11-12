@@ -155,8 +155,6 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("RECEIVED CODE:\n%s\n", payload.Code)
-
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		log.Println("ERROR: OPENAI_API_KEY is not set")

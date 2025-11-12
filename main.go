@@ -155,6 +155,8 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("RECEIVED CODE:\n%s\n", payload.Code)
+
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		log.Println("ERROR: OPENAI_API_KEY is not set")
@@ -165,7 +167,11 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	// OpenAI APIへのリクエストボディを作成
 	reqMessages := []OpenAIMessage{
 		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: payload.Message},
+		{Role: "user", Content: fmt.Sprintf(
+			"以下は学生が書いたC++コードです。\n\n```cpp\n%s\n```\n\nこのコードに基づいて次の質問に答えてください。\n\n%s",
+			payload.Code,
+			payload.Message,
+		)},
 	}
 	reqBody := OpenAIRequest{
 		Model:    "gpt-4o-mini",
@@ -343,6 +349,7 @@ type ResultPayload struct {
 // /api/chat へのリクエストボディ
 type ChatPayload struct {
 	Message string `json:"message"`
+	Code    string `json:"code"`
 }
 
 // /api/chat からのレスポンスボディ

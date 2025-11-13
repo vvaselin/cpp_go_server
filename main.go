@@ -44,7 +44,7 @@ func main() {
 
 	// --- サーバー起動 ---
 	// myIP := os.Getenv("MY_IPV4_ADDRESS")
-	log.Println("Go server listening on:")
+	log.Println("Goサーバーが待機中:")
 	log.Println("  - http://localhost:8088 (ローカル)")
 
 	/*
@@ -53,8 +53,8 @@ func main() {
 		}
 	*/
 
-	log.Println("(Serving APIs: /execute, /api/chat)")
-	// log.Println("(Serving Static files from: " + staticDir + ")")
+	log.Println("(API配信: /execute, /api/chat)")
+	// log.Println("(静的ファイルの配信元: " + staticDir + ")")
 
 	// ListenAndServe はエラーを返すため、ログに出力する
 	if err := http.ListenAndServe(":8088", nil); err != nil {
@@ -75,7 +75,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 
 	var payload CodePayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		log.Printf("ERROR: Invalid JSON received (execute): %v", err)
+		log.Printf("ERROR(/execute): 不正なJSONを受信: %v", err)
 		http.Error(w, "Bad Request: Invalid JSON", http.StatusBadRequest)
 		return
 	}
@@ -83,16 +83,16 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	// 一時ディレクトリを作成
 	dir, err := os.MkdirTemp("", "cpp-execution-")
 	if err != nil {
-		log.Printf("ERROR: Failed to create temp dir: %v", err)
+		log.Printf("ERROR: 一時ディレクトリの作成に失敗: %v", err)
 		http.Error(w, "Failed to create temp dir", http.StatusInternalServerError)
 		return
 	}
 	defer os.RemoveAll(dir)
-	log.Printf("INFO: Created temp directory: %s", dir)
+	log.Printf("INFO:: 一時ディレクトリを作成: %s", dir)
 
 	// C++コードを一時ディレクトリに書き出す
 	if err := os.WriteFile(filepath.Join(dir, "main.cpp"), []byte(payload.Code), 0666); err != nil {
-		log.Printf("ERROR: Failed to write main.cpp: %v", err)
+		log.Printf("ERROR: main.cpp書き込みに失敗: %v", err)
 		http.Error(w, "Failed to write to temp file", http.StatusInternalServerError)
 		return
 	}
@@ -105,7 +105,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	compileAndRunScript := "g++ /usr/src/app/main.cpp -o /usr/src/app/main.out && /usr/src/app/main.out"
 
 	// ホストの一時ディレクトリをコンテナの /usr/src/app にマウントして実行
-	log.Printf("INFO: Running Docker container using volume mount...")
+	log.Printf("INFO: Dockerコンテナを実行(ボリュームマウント使用)...")
 	runCmd := exec.CommandContext(ctx, "docker", "run",
 		"--rm",                                    // 実行後にコンテナを削除
 		"--net=none",                              // ネットワークを無効化
@@ -129,13 +129,13 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 
 	// その他の実行エラー（コンパイルエラーなど）
 	if err != nil {
-		log.Printf("ERROR: Docker run failed: %v\nStderr: %s", err, stderr.String())
+		log.Printf("ERROR: 実行失敗: %v\n標準エラー: %s", err, stderr.String())
 		http.Error(w, "Execution failed: "+stderr.String(), http.StatusInternalServerError)
 		return
 	}
 
 	// 成功した結果を返す
-	log.Printf("INFO: Docker execution successful. Output: %s", out.String())
+	log.Printf("INFO: 実行成功. 出力: %s", out.String())
 	response := ResultPayload{Result: out.String()}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -150,14 +150,14 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 
 	var payload ChatPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		log.Printf("ERROR: Invalid JSON received (chat): %v", err)
+		log.Printf("ERROR(/api/chat): 不正なJSONを受信: %v", err)
 		http.Error(w, "Bad Request: Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
-		log.Println("ERROR: OPENAI_API_KEY is not set")
+		log.Println("ERROR: 'OPENAI_API_KEY'が設定されていません")
 		http.Error(w, "Internal Server Error: API key not configured", http.StatusInternalServerError)
 		return
 	}
@@ -179,7 +179,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 
 	reqBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		log.Printf("ERROR: Failed to marshal OpenAI request: %v", err)
+		log.Printf("ERROR: OpenAIへのリクエスト送信に失敗: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -200,7 +200,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("ERROR: Failed to send request to OpenAI: %v", err)
+		log.Printf("ERROR: OpenAIへのリクエスト送信に失敗: %v", err)
 		http.Error(w, "Failed to communicate with AI", http.StatusBadGateway)
 		return
 	}
@@ -208,7 +208,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		log.Printf("ERROR: OpenAI API returned non-200 status: %d %s", resp.StatusCode, string(bodyBytes))
+		log.Printf("ERROR: OpenAI APIが200以外のステータスを返答: %d %s", resp.StatusCode, string(bodyBytes))
 		http.Error(w, "AI service returned an error", http.StatusBadGateway)
 		return
 	}
@@ -216,7 +216,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	// レスポンスをパース
 	var openAIResp OpenAIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
-		log.Printf("ERROR: Failed to decode OpenAI response: %v", err)
+		log.Printf("ERROR: OpenAIレスポンスのJSONデコードに失敗: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}

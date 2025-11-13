@@ -105,7 +105,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	compileAndRunScript := "g++ /usr/src/app/main.cpp -o /usr/src/app/main.out && /usr/src/app/main.out"
 
 	// ホストの一時ディレクトリをコンテナの /usr/src/app にマウントして実行
-	log.Printf("INFO: Dockerコンテナを実行(ボリュームマウント使用)...")
+	log.Printf("INFO: Dockerコンテナを実行...")
 	runCmd := exec.CommandContext(ctx, "docker", "run",
 		"--rm",                                    // 実行後にコンテナを削除
 		"--net=none",                              // ネットワークを無効化

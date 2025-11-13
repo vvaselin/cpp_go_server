@@ -129,13 +129,13 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 
 	// その他の実行エラー（コンパイルエラーなど）
 	if err != nil {
-		log.Printf("ERROR: 実行失敗: %v\n標準エラー: %s", err, stderr.String())
+		log.Printf("ERROR: C++実行失敗: %v\n標準エラー: %s", err, stderr.String())
 		http.Error(w, "Execution failed: "+stderr.String(), http.StatusInternalServerError)
 		return
 	}
 
 	// 成功した結果を返す
-	log.Printf("INFO: 実行成功. 出力: %s", out.String())
+	log.Printf("INFO: C++実行成功. 出力: %s", out.String())
 	response := ResultPayload{Result: out.String()}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)

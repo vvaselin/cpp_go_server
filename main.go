@@ -135,7 +135,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 成功した結果を返す
-	log.Printf("INFO: C++実行成功. 出力: %s", out.String())
+	log.Printf("INFO: C++実行成功: %s", out.String())
 	response := ResultPayload{Result: out.String()}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -166,7 +166,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	reqMessages := []OpenAIMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: fmt.Sprintf(
-			"以下は学生が書いたC++コードです。\n\n```cpp\n%s\n```\n\nこのコードに基づいて次の質問に答えてください。\n\n%s",
+			payload.Task,
 			payload.Code,
 			payload.Message,
 		)},
@@ -349,6 +349,7 @@ type ResultPayload struct {
 type ChatPayload struct {
 	Message string `json:"message"`
 	Code    string `json:"code"`
+	Task    string `json:"task"`
 }
 
 // /api/chat からのレスポンスボディ

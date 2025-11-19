@@ -25,6 +25,8 @@ var systemPrompt string
 // staticDir は配信するティラノスクリプトのプロジェクトディレクトリです。
 const staticDir = "../tyranoedu"
 
+var gradeSystemPrompt string
+
 //================================================================
 // サーバー起動処理 (main)
 //================================================================
@@ -33,11 +35,14 @@ func main() {
 	// --- 初期化処理 ---
 	loadEnv()
 	loadSystemPrompt()
+	loadGradeSystemPrompt()
 
 	// --- ハンドラ（ルーティング）設定 ---
 	// APIルート（静的ファイルより先に登録）
 	http.Handle("/execute", corsMiddleware(http.HandlerFunc(executeHandler)))
 	http.Handle("/api/chat", corsMiddleware(http.HandlerFunc(chatHandler)))
+
+	http.Handle("/api/grade", corsMiddleware(http.HandlerFunc(gradeHandler)))
 
 	// 静的ファイル配信ルート（上記以外のすべてのリクエスト）
 	http.Handle("/", staticFileHandler())
@@ -232,6 +237,46 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// --- 採点ハンドラ ---
+func gradeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var p GradePayload
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// AIに送るユーザープロンプトを構築
+	userMessage := fmt.Sprintf(
+		"【課題】\n%s\n\n【想定出力】\n%s\n\n【提出コード】\n%s\n\n【実際の実行出力】\n%s",
+		p.TaskDesc, p.ExpectedOutput, p.Code, p.Output,
+	)
+
+	aiResponseStr, err := callOpenAI(gradeSystemPrompt, userMessage)
+	if err != nil {
+		http.Error(w, "AI Error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// JSON部分だけ抽出（Markdown記法 ```json ... ``` などを除去する処理が必要な場合あり）
+	aiResponseStr = cleanJSONString(aiResponseStr)
+
+	// レスポンスをパースして検証
+	var gradeRes GradeResponse
+	if err := json.Unmarshal([]byte(aiResponseStr), &gradeRes); err != nil {
+		log.Println("JSON Parse Error:", aiResponseStr)
+		http.Error(w, "AI Response Parse Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(gradeRes)
+}
+
 // --- 静的ファイル配信ハンドラ ---
 func staticFileHandler() http.Handler {
 	fs := http.FileServer(http.Dir(staticDir))
@@ -327,6 +372,16 @@ func loadSystemPrompt() {
 	}
 }
 
+func loadGradeSystemPrompt() {
+	content, err := os.ReadFile("./prompts/prompt_grade.txt")
+	if err != nil {
+		log.Println("prompt_grade.txtの読み込み失敗。デフォルトを使用。")
+		gradeSystemPrompt = "あなたは採点官です。JSONで採点してください。"
+	} else {
+		gradeSystemPrompt = string(content)
+	}
+}
+
 //================================================================
 // データ構造体 (Structs)
 //================================================================
@@ -376,4 +431,99 @@ type OpenAIResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+}
+
+// 採点リクエスト用
+type GradePayload struct {
+	Code           string `json:"code"`            // ユーザーのコード
+	Output         string `json:"output"`          // 実行結果の出力
+	TaskDesc       string `json:"task_desc"`       // 課題文
+	ExpectedOutput string `json:"expected_output"` // 想定出力
+}
+
+// 採点レスポンス用 (AIからのJSONをマッピング)
+type GradeResponse struct {
+	Score       int    `json:"score"`
+	Reason      string `json:"reason"`
+	Improvement string `json:"improvement"`
+}
+
+//================================================================
+// ヘルパー関数
+//================================================================
+
+// callOpenAI は OpenAI API にリクエストを送り、結果の文字列を返します
+func callOpenAI(sysPrompt, userMsg string) (string, error) {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		return "", fmt.Errorf("OPENAI_API_KEY が設定されていません")
+	}
+
+	// リクエストボディの作成
+	reqMessages := []OpenAIMessage{
+		{Role: "system", Content: sysPrompt},
+		{Role: "user", Content: userMsg},
+	}
+
+	reqBody := OpenAIRequest{
+		Model:    "gpt-4o-mini", // 必要に応じてモデルを変更してください
+		Messages: reqMessages,
+	}
+
+	reqBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("JSON作成エラー: %v", err)
+	}
+
+	// HTTPリクエストの作成 (30秒タイムアウト)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(reqBytes))
+	if err != nil {
+		return "", fmt.Errorf("リクエスト作成エラー: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	// 送信
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("API通信エラー: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("APIエラー (Status: %d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// レスポンスのパース
+	var openAIResp OpenAIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
+		return "", fmt.Errorf("レスポンスデコードエラー: %v", err)
+	}
+
+	if len(openAIResp.Choices) == 0 || openAIResp.Choices[0].Message.Content == "" {
+		return "", fmt.Errorf("AIからの応答が空です")
+	}
+
+	return openAIResp.Choices[0].Message.Content, nil
+}
+
+// cleanJSONString は AIが返したマークダウン記法 (```json ... ```) を除去します
+func cleanJSONString(s string) string {
+	s = strings.TrimSpace(s)
+
+	// Markdownのコードブロック記法があれば削除
+	if strings.HasPrefix(s, "```json") {
+		s = strings.TrimPrefix(s, "```json")
+		s = strings.TrimSuffix(s, "```")
+	} else if strings.HasPrefix(s, "```") {
+		s = strings.TrimPrefix(s, "```")
+		s = strings.TrimSuffix(s, "```")
+	}
+
+	return strings.TrimSpace(s)
 }

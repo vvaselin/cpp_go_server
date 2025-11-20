@@ -363,7 +363,7 @@ func loadEnv() {
 
 // loadSystemPrompt は .txt からシステムプロンプトを読み込み、グローバル変数にセット
 func loadSystemPrompt() {
-	content, err := os.ReadFile("./prompts/prompt_mocha.txt") // main.go と同じ階層
+	content, err := os.ReadFile("./prompts/prompt_mocha_distant.txt")
 	if err != nil {
 		log.Println("prompt.txtの読み込みに失敗しました。デフォルトのプロンプトを使用します。")
 		systemPrompt = "あなたは親切なAIアシスタントです。"

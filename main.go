@@ -168,13 +168,16 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// OpenAI APIへのリクエストボディを作成
+	userContent := fmt.Sprintf(
+		"【現在の課題】\n%s\n\n【ユーザーのコード】\n%s\n\n【ユーザーのメッセージ】\n%s",
+		payload.Task,
+		payload.Code,
+		payload.Message,
+	)
+
 	reqMessages := []OpenAIMessage{
 		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: fmt.Sprintf(
-			payload.Task,
-			payload.Code,
-			payload.Message,
-		)},
+		{Role: "user", Content: userContent},
 	}
 
 	reqBody := OpenAIRequest{
@@ -226,15 +229,25 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// クライアント（ティラノ）に返すレスポンス
-	responseText := "（応答なし）"
-	if len(openAIResp.Choices) > 0 && openAIResp.Choices[0].Message.Content != "" {
-		responseText = openAIResp.Choices[0].Message.Content
+	aiRawContent := ""
+	if len(openAIResp.Choices) > 0 {
+		aiRawContent = openAIResp.Choices[0].Message.Content
 	}
-
-	response := ChatResponse{Text: responseText}
+	// Markdown記法 (```json ... ```) が含まれている場合に除去する
+	aiCleanContent := cleanJSONString(aiRawContent)
+	// JSON文字列を構造体にパース
+	var chatRes ChatResponse
+	if err := json.Unmarshal([]byte(aiCleanContent), &chatRes); err != nil {
+		log.Printf("WARNING: AIの応答がJSONとしてパースできませんでした。生テキストを返します。\nRaw: %s\nError: %v", aiCleanContent, err)
+		// パース失敗時は、AIの応答全てをテキストとして扱い、感情はデフォルトにする
+		chatRes = ChatResponse{
+			Text:    aiCleanContent, // 除去後のテキストを入れる
+			Emotion: "normal",
+		}
+	}
+	// クライアント（ティラノ）にJSONを返す
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(chatRes)
 }
 
 // --- 採点ハンドラ ---
@@ -409,7 +422,8 @@ type ChatPayload struct {
 
 // /api/chat からのレスポンスボディ
 type ChatResponse struct {
-	Text string `json:"text"`
+	Text    string `json:"text"`
+	Emotion string `json:"emotion"`
 }
 
 // OpenAI API へのリクエストボディ

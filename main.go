@@ -243,6 +243,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		chatRes = ChatResponse{
 			Text:    aiCleanContent, // 除去後のテキストを入れる
 			Emotion: "normal",
+			LoveUp:  0,
 		}
 	}
 	// クライアント（ティラノ）にJSONを返す
@@ -424,6 +425,7 @@ type ChatPayload struct {
 type ChatResponse struct {
 	Text    string `json:"text"`
 	Emotion string `json:"emotion"`
+	LoveUp  int    `json:"love_up"`
 }
 
 // OpenAI API へのリクエストボディ

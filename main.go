@@ -27,6 +27,10 @@ const staticDir = "../tyranoedu"
 
 var gradeSystemPrompt string
 
+const MEMORY_FILE = "user_memory.json"
+
+var summarySystemPrompt string
+
 //================================================================
 // サーバー起動処理 (main)
 //================================================================
@@ -47,6 +51,10 @@ func main() {
 	// 静的ファイル配信ルート（上記以外のすべてのリクエスト）
 	http.Handle("/", staticFileHandler())
 
+	// 記憶ハンドラ
+	http.Handle("/api/memory", corsMiddleware(http.HandlerFunc(getMemoryHandler)))
+	http.Handle("/api/summarize", corsMiddleware(http.HandlerFunc(summarizeHandler)))
+
 	// --- サーバー起動 ---
 	// myIP := os.Getenv("MY_IPV4_ADDRESS")
 	log.Println("Goサーバーが待機中:")
@@ -58,7 +66,7 @@ func main() {
 		}
 	*/
 
-	log.Println("(API配信: /execute, /api/chat)")
+	log.Println("(API配信: /execute, /api/chat, /api/grade, /api/memory, /api/summarize)")
 	// log.Println("(静的ファイルの配信元: " + staticDir + ")")
 
 	// ListenAndServe はエラーを返すため、ログに出力する
@@ -270,7 +278,7 @@ func gradeHandler(w http.ResponseWriter, r *http.Request) {
 		p.TaskDesc, p.ExpectedOutput, p.Code, p.Output,
 	)
 
-	aiResponseStr, err := callOpenAI(gradeSystemPrompt, userMessage)
+	aiResponseStr, err := callOpenAI(gradeSystemPrompt, userMessage, false)
 	if err != nil {
 		http.Error(w, "AI Error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -363,6 +371,19 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// GET /api/memory
+func getMemoryHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+
+	mem, err := loadMemory()
+	if err != nil {
+		http.Error(w, "Failed to load memory", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(mem)
+}
+
 //================================================================
 // 初期化関数
 //================================================================
@@ -394,6 +415,102 @@ func loadGradeSystemPrompt() {
 	} else {
 		gradeSystemPrompt = string(content)
 	}
+}
+
+// 記憶ファイルを読み込むヘルパー関数
+func loadMemory() (UserMemory, error) {
+	var mem UserMemory
+	// デフォルト値
+	mem.Summary = "まだ会話をしていません。"
+	mem.LearnedTopics = []string{}
+	mem.Weaknesses = []string{}
+
+	file, err := os.ReadFile(MEMORY_FILE)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return mem, nil // ファイルがない場合は初期値を返す
+		}
+		return mem, err
+	}
+	err = json.Unmarshal(file, &mem)
+	return mem, err
+}
+
+// 記憶ファイルを保存するヘルパー関数
+func saveMemory(mem UserMemory) error {
+	data, err := json.MarshalIndent(mem, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(MEMORY_FILE, data, 0644)
+}
+
+// POST /api/summarize
+func summarizeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// リクエスト受信 (CurrentLoveLevelが含まれているはず)
+	var req SummarizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// 現在の記憶をロード
+	currentMem, _ := loadMemory()
+
+	// プロンプト作成
+	logText := ""
+	for _, item := range req.ChatLog {
+		logText += fmt.Sprintf("%s: %s\n", item.Username, item.Message)
+	}
+
+	// クライアントから来た love_level をプロンプトに明記する
+	userPrompt := fmt.Sprintf(`
+[Current Memory JSON]
+%s
+
+[Current Status]
+Current Love Level: %d
+
+[Recent Chat Log]
+%s
+`, jsonCurrentMem(currentMem), req.CurrentLoveLevel, logText)
+
+	// AI呼び出し (JSONモード有効: true)
+	newJsonStr, err := callOpenAI(summarySystemPrompt, userPrompt, true)
+	if err != nil {
+		log.Printf("Summary generation failed: %v", err)
+		http.Error(w, "Summary generation failed", http.StatusInternalServerError)
+		return
+	}
+
+	// 保存処理
+	newJsonStr = cleanJSONString(newJsonStr)
+	var newMem UserMemory
+	if err := json.Unmarshal([]byte(newJsonStr), &newMem); err != nil {
+		log.Printf("JSON Parse Error: %v\nResponse: %s", err, newJsonStr)
+		http.Error(w, "Failed to parse summary JSON", http.StatusInternalServerError)
+		return
+	}
+
+	// 安全策: AIが数値を間違えても、クライアントの値を正とするならここで上書きする
+	if req.CurrentLoveLevel > 0 {
+		newMem.LoveLevel = req.CurrentLoveLevel
+	}
+
+	newMem.LastUpdated = time.Now().Format("2006-01-02 15:04:05")
+
+	if err := saveMemory(newMem); err != nil {
+		http.Error(w, "Failed to save memory", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
 
 //================================================================
@@ -428,10 +545,15 @@ type ChatResponse struct {
 	LoveUp  int    `json:"love_up"`
 }
 
+type ResponseFormat struct {
+	Type string `json:"type"`
+}
+
 // OpenAI API へのリクエストボディ
 type OpenAIRequest struct {
-	Model    string          `json:"model"`
-	Messages []OpenAIMessage `json:"messages"`
+	Model          string          `json:"model"`
+	Messages       []OpenAIMessage `json:"messages"`
+	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 }
 
 // OpenAI API で使用するメッセージ構造体
@@ -447,6 +569,24 @@ type OpenAIResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+}
+
+// 記憶データ構造
+type UserMemory struct {
+	Summary       string   `json:"summary"`        // ユーザーの学習状況・特徴の要約
+	LearnedTopics []string `json:"learned_topics"` // 学んだ項目リスト
+	Weaknesses    []string `json:"weaknesses"`     // 苦手な項目リスト
+	LoveLevel     int      `json:"love_level"`     // (オプション) 親密度をサーバー側でもバックアップしたい場合
+	LastUpdated   string   `json:"last_updated"`   // 最終更新日時
+}
+
+// 要約リクエストの構造体
+type SummarizeRequest struct {
+	ChatLog []struct {
+		Username string `json:"username"`
+		Message  string `json:"message"`
+	} `json:"chat_history"`
+	CurrentLoveLevel int `json:"current_love_level"`
 }
 
 // 採点リクエスト用
@@ -469,21 +609,25 @@ type GradeResponse struct {
 //================================================================
 
 // callOpenAI は OpenAI API にリクエストを送り、結果の文字列を返します
-func callOpenAI(sysPrompt, userMsg string) (string, error) {
+func callOpenAI(sysPrompt, userMsg string, useJSON bool) (string, error) {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		return "", fmt.Errorf("OPENAI_API_KEY が設定されていません")
 	}
 
-	// リクエストボディの作成
 	reqMessages := []OpenAIMessage{
 		{Role: "system", Content: sysPrompt},
 		{Role: "user", Content: userMsg},
 	}
 
 	reqBody := OpenAIRequest{
-		Model:    "gpt-4o-mini", // 必要に応じてモデルを変更してください
+		Model:    "gpt-4o-mini",
 		Messages: reqMessages,
+	}
+
+	// JSONモードの切り替えスイッチ
+	if useJSON {
+		reqBody.ResponseFormat = &ResponseFormat{Type: "json_object"}
 	}
 
 	reqBytes, err := json.Marshal(reqBody)
@@ -491,7 +635,10 @@ func callOpenAI(sysPrompt, userMsg string) (string, error) {
 		return "", fmt.Errorf("JSON作成エラー: %v", err)
 	}
 
-	// HTTPリクエストの作成 (30秒タイムアウト)
+	// ... (HTTPリクエスト作成部分は変更なし) ...
+	// req, err := http.NewRequestWithContext(...) など
+	// req.Header.Set(...) など
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -502,7 +649,6 @@ func callOpenAI(sysPrompt, userMsg string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	// 送信
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -515,7 +661,6 @@ func callOpenAI(sysPrompt, userMsg string) (string, error) {
 		return "", fmt.Errorf("APIエラー (Status: %d): %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	// レスポンスのパース
 	var openAIResp OpenAIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
 		return "", fmt.Errorf("レスポンスデコードエラー: %v", err)
@@ -542,4 +687,10 @@ func cleanJSONString(s string) string {
 	}
 
 	return strings.TrimSpace(s)
+}
+
+// ヘルパー: 構造体をJSON文字列にする
+func jsonCurrentMem(mem UserMemory) string {
+	b, _ := json.Marshal(mem)
+	return string(b)
 }

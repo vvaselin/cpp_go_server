@@ -115,17 +115,22 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// コンテナ内で実行するコマンド
-	compileAndRunScript := "g++ /usr/src/app/main.cpp -o /usr/src/app/main.out && /usr/src/app/main.out"
+	compileAndRunScript := "g++ -Wall /usr/src/app/main.cpp -o /usr/src/app/main.out && /usr/src/app/main.out"
 
 	// ホストの一時ディレクトリをコンテナの /usr/src/app にマウントして実行
 	log.Printf("INFO: Dockerコンテナを実行...")
 	runCmd := exec.CommandContext(ctx, "docker", "run",
-		"--rm",                                    // 実行後にコンテナを削除
+		"--rm", // 実行後にコンテナを削除
+		"-i",
 		"--net=none",                              // ネットワークを無効化
 		"-v", fmt.Sprintf("%s:/usr/src/app", dir), // ボリュームマウント
 		"gcc:latest",                    // ベースイメージを直接指定
 		"sh", "-c", compileAndRunScript, // コンテナで実行するコマンド
 	)
+
+	if payload.Stdin != "" {
+		runCmd.Stdin = strings.NewReader(payload.Stdin)
+	}
 
 	var out bytes.Buffer
 	var stderr bytes.Buffer
@@ -521,7 +526,8 @@ Current Love Level: %d
 
 // /execute へのリクエストボディ
 type CodePayload struct {
-	Code string `json:"code"`
+	Code  string `json:"code"`
+	Stdin string `json:"stdin"`
 }
 
 // /execute からのレスポンスボディ

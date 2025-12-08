@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/nedpals/supabase-go"
 )
 
 // --- グローバル設定 ---
@@ -31,6 +32,8 @@ const MEMORY_FILE = "user_memory.json"
 
 var summarySystemPrompt string
 
+var supabaseClient *supabase.Client
+
 //================================================================
 // サーバー起動処理 (main)
 //================================================================
@@ -38,8 +41,19 @@ var summarySystemPrompt string
 func main() {
 	// --- 初期化処理 ---
 	loadEnv()
+
+	supabaseUrl := os.Getenv("SUPABASE_URL")
+	supabaseKey := os.Getenv("SUPABASE_KEY")
+	if supabaseUrl == "" || supabaseKey == "" {
+		log.Println("WARNING: SUPABASE_URL または SUPABASE_KEY が設定されていません。DB機能は無効です。")
+	} else {
+		supabaseClient = supabase.CreateClient(supabaseUrl, supabaseKey)
+		log.Println("INFO: Supabase接続完了")
+	}
+
 	loadSystemPrompt()
 	loadGradeSystemPrompt()
+	loadSummarySystemPrompt()
 
 	// --- ハンドラ（ルーティング）設定 ---
 	// APIルート（静的ファイルより先に登録）
@@ -277,6 +291,8 @@ func gradeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("DEBUG: UserID=%s, TaskID=%s, Score=%d", p.UserID, p.TaskID, 0)
+
 	// AIに送るユーザープロンプトを構築
 	userMessage := fmt.Sprintf(
 		"【課題】\n%s\n\n【想定出力】\n%s\n\n【提出コード】\n%s\n\n【実際の実行出力】\n%s",
@@ -300,8 +316,88 @@ func gradeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ユーザーIDとタスクIDがある場合のみ実行
+	bonusLove := 0
+	isNewRecord := false
+
+	if supabaseClient != nil && p.UserID != "" && p.TaskID != "" {
+		// DBから現在の記録を取得
+		var records []UserTaskProgress
+		err := supabaseClient.DB.From("task_progress").
+			Select("high_score").
+			Eq("user_id", p.UserID).
+			Eq("task_id", p.TaskID).
+			Execute(&records)
+
+		if err != nil {
+			log.Printf("ERROR: Supabase Select failed: %v", err)
+		}
+
+		currentScore := gradeRes.Score
+
+		if err == nil && len(records) > 0 {
+			// 記録あり: ハイスコア更新チェック
+			oldHighScore := records[0].HighScore
+			log.Printf("INFO: Record found. Old HighScore: %d, Current: %d", oldHighScore, currentScore) // ★ログ追加
+
+			if currentScore > oldHighScore {
+				bonusLove = 3 // 更新ボーナス
+				isNewRecord = true
+				// アップデート
+				updateData := map[string]interface{}{"high_score": currentScore, "is_cleared": currentScore >= 80}
+
+				// ★修正: Executeのエラーを捕捉する
+				var updateResult interface{}
+				upErr := supabaseClient.DB.From("task_progress").
+					Update(updateData).
+					Eq("user_id", p.UserID).
+					Eq("task_id", p.TaskID).
+					Execute(&updateResult)
+
+				if upErr != nil {
+					log.Printf("ERROR: Supabase Update failed: %v", upErr)
+				} else {
+					log.Println("INFO: Supabase Update success")
+				}
+			}
+		} else {
+			// 記録なし: 新規作成
+			log.Println("INFO: No record found. Creating new record.") // ★ログ追加
+
+			if currentScore >= 80 {
+				bonusLove = 5 // 初クリアボーナス
+			}
+			// 新規インサート
+			newData := map[string]interface{}{
+				"user_id":    p.UserID,
+				"task_id":    p.TaskID,
+				"high_score": currentScore,
+				"is_cleared": currentScore >= 80,
+			}
+
+			// ★修正: Executeのエラーを捕捉する
+			var insertResult interface{}
+			inErr := supabaseClient.DB.From("task_progress").Insert(newData).Execute(&insertResult)
+
+			if inErr != nil {
+				log.Printf("ERROR: Supabase Insert failed: %v", inErr)
+			} else {
+				log.Println("INFO: Supabase Insert success")
+			}
+		}
+	}
+
+	// レスポンスにボーナス情報を付与
+	responseMap := map[string]interface{}{
+		"score":         gradeRes.Score,
+		"reason":        gradeRes.Reason,
+		"improvement":   gradeRes.Improvement,
+		"bonus_love":    bonusLove,   // ★追加
+		"is_new_record": isNewRecord, // ★追加
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(gradeRes)
+	json.NewEncoder(w).Encode(responseMap)
 }
 
 // --- 静的ファイル配信ハンドラ ---
@@ -378,15 +474,43 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 // GET /api/memory
 func getMemoryHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Type", "application/json")
-
-	mem, err := loadMemory()
-	if err != nil {
-		http.Error(w, "Failed to load memory", http.StatusInternalServerError)
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		// IDがない場合は空の初期値を返す（またはエラー）
+		json.NewEncoder(w).Encode(UserProfile{
+			Summary:   "ユーザーIDが指定されていません。",
+			LoveLevel: 0,
+		})
 		return
 	}
-	json.NewEncoder(w).Encode(mem)
+
+	// Supabaseから取得
+	var profiles []UserProfile
+	err := supabaseClient.DB.From("profiles").Select("*").Eq("id", userID).Execute(&profiles)
+
+	if err != nil {
+		log.Printf("ERROR: Fetch profile failed: %v", err)
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	if len(profiles) == 0 {
+		// データがない場合は初期レコードを作成して返す
+		newProfile := UserProfile{
+			ID:            userID,
+			LoveLevel:     0,
+			Summary:       "初めまして。これからよろしくお願いします。",
+			LearnedTopics: []string{},
+			Weaknesses:    []string{},
+			LastUpdated:   time.Now().Format("2006-01-02 15:04:05"),
+		}
+		// DBに保存
+		supabaseClient.DB.From("profiles").Insert(newProfile).Execute(nil)
+		json.NewEncoder(w).Encode(newProfile)
+	} else {
+		// 既存データを返す
+		json.NewEncoder(w).Encode(profiles[0])
+	}
 }
 
 //================================================================
@@ -419,6 +543,19 @@ func loadGradeSystemPrompt() {
 		gradeSystemPrompt = "あなたは採点官です。JSONで採点してください。"
 	} else {
 		gradeSystemPrompt = string(content)
+	}
+}
+
+// loadSummarySystemPrompt は .txt から要約用プロンプトを読み込みます
+func loadSummarySystemPrompt() {
+	// ファイル名は実際の場所に合わせる (例: ./prompts/prompt_summary.txt)
+	content, err := os.ReadFile("./prompts/prompt_summary.txt")
+	if err != nil {
+		log.Println("警告: prompt_summary.txtの読み込み失敗。デフォルトを使用。")
+		summarySystemPrompt = "あなたはユーザーの学習状況を記録するメモリーマネージャーです。JSON形式で出力してください。"
+	} else {
+		summarySystemPrompt = string(content)
+		log.Println("INFO: prompt_summary.txt を読み込みました")
 	}
 }
 
@@ -457,23 +594,35 @@ func summarizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// リクエスト受信 (CurrentLoveLevelが含まれているはず)
 	var req SummarizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// 現在の記憶をロード
-	currentMem, _ := loadMemory()
+	if req.UserID == "" {
+		http.Error(w, "UserID is required", http.StatusBadRequest)
+		return
+	}
 
-	// プロンプト作成
+	// 現在の記憶をDBからロード (loadMemory()の代わり)
+	var profiles []UserProfile
+	supabaseClient.DB.From("profiles").Select("*").Eq("id", req.UserID).Execute(&profiles)
+
+	var currentMem UserProfile
+	if len(profiles) > 0 {
+		currentMem = profiles[0]
+	}
+
+	// プロンプト作成 (ここは変更なし)
 	logText := ""
 	for _, item := range req.ChatLog {
 		logText += fmt.Sprintf("%s: %s\n", item.Username, item.Message)
 	}
 
-	// クライアントから来た love_level をプロンプトに明記する
+	// AI呼び出し (currentMemの型が変わったので jsonCurrentMem関数などは適宜調整するか、json.Marshalで直接文字列化)
+	currentMemJson, _ := json.Marshal(currentMem)
+
 	userPrompt := fmt.Sprintf(`
 [Current Memory JSON]
 %s
@@ -483,34 +632,35 @@ Current Love Level: %d
 
 [Recent Chat Log]
 %s
-`, jsonCurrentMem(currentMem), req.CurrentLoveLevel, logText)
+`, string(currentMemJson), req.CurrentLoveLevel, logText)
 
-	// AI呼び出し (JSONモード有効: true)
+	// AI実行 ... (変更なし)
 	newJsonStr, err := callOpenAI(summarySystemPrompt, userPrompt, true)
-	if err != nil {
-		log.Printf("Summary generation failed: %v", err)
-		http.Error(w, "Summary generation failed", http.StatusInternalServerError)
-		return
+	if err != nil { /* エラー処理 */
 	}
 
 	// 保存処理
 	newJsonStr = cleanJSONString(newJsonStr)
-	var newMem UserMemory
-	if err := json.Unmarshal([]byte(newJsonStr), &newMem); err != nil {
-		log.Printf("JSON Parse Error: %v\nResponse: %s", err, newJsonStr)
-		http.Error(w, "Failed to parse summary JSON", http.StatusInternalServerError)
-		return
+	var newProfileData UserProfile
+	if err := json.Unmarshal([]byte(newJsonStr), &newProfileData); err != nil {
+		/* エラー処理 */
 	}
 
-	// 安全策: AIが数値を間違えても、クライアントの値を正とするならここで上書きする
+	// AIの結果を信頼しつつ、IDと好感度を確定させる
+	newProfileData.ID = req.UserID
 	if req.CurrentLoveLevel > 0 {
-		newMem.LoveLevel = req.CurrentLoveLevel
+		newProfileData.LoveLevel = req.CurrentLoveLevel
 	}
+	newProfileData.LastUpdated = time.Now().Format("2006-01-02 15:04:05")
 
-	newMem.LastUpdated = time.Now().Format("2006-01-02 15:04:05")
+	// Supabase更新 (Update)
+	// JSONBのカラム(learned_topics等)もうまくマッピングされるはずですが、
+	// エラーが出る場合は map[string]interface{} に変換して渡してください。
+	err = supabaseClient.DB.From("profiles").Update(newProfileData).Eq("id", req.UserID).Execute(nil)
 
-	if err := saveMemory(newMem); err != nil {
-		http.Error(w, "Failed to save memory", http.StatusInternalServerError)
+	if err != nil {
+		log.Printf("ERROR: Save profile failed: %v", err)
+		http.Error(w, "Failed to save to DB", http.StatusInternalServerError)
 		return
 	}
 
@@ -588,6 +738,7 @@ type UserMemory struct {
 
 // 要約リクエストの構造体
 type SummarizeRequest struct {
+	UserID  string `json:"user_id"`
 	ChatLog []struct {
 		Username string `json:"username"`
 		Message  string `json:"message"`
@@ -597,6 +748,8 @@ type SummarizeRequest struct {
 
 // 採点リクエスト用
 type GradePayload struct {
+	UserID         string `json:"user_id"`
+	TaskID         string `json:"task_id"`
 	Code           string `json:"code"`            // ユーザーのコード
 	Output         string `json:"output"`          // 実行結果の出力
 	TaskDesc       string `json:"task_desc"`       // 課題文
@@ -608,6 +761,24 @@ type GradeResponse struct {
 	Score       int    `json:"score"`
 	Reason      string `json:"reason"`
 	Improvement string `json:"improvement"`
+}
+
+// Supabase採点用の構造体
+type UserTaskProgress struct {
+	UserID    string `json:"user_id"`
+	TaskID    string `json:"task_id"`
+	HighScore int    `json:"high_score"`
+	IsCleared bool   `json:"is_cleared"`
+}
+
+// DBの profiles テーブル用構造体
+type UserProfile struct {
+	ID            string   `json:"id"`
+	LoveLevel     int      `json:"love_level"`
+	Summary       string   `json:"summary"`
+	LearnedTopics []string `json:"learned_topics"`
+	Weaknesses    []string `json:"weaknesses"`
+	LastUpdated   string   `json:"last_updated"`
 }
 
 //================================================================

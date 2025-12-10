@@ -382,7 +382,7 @@ func gradeHandler(w http.ResponseWriter, r *http.Request) {
 			if inErr != nil {
 				log.Printf("ERROR: Supabase Insert failed: %v", inErr)
 			} else {
-				log.Println("INFO: Supabase Insert success")
+				//log.Println("INFO: Supabase Insert success")
 			}
 		}
 	}

@@ -349,7 +349,6 @@ func gradeHandler(w http.ResponseWriter, r *http.Request) {
 				// アップデート
 				updateData := map[string]interface{}{"high_score": currentScore, "is_cleared": currentScore >= 80}
 
-				// ★修正: Executeのエラーを捕捉する
 				var updateResult interface{}
 				upErr := supabaseClient.DB.From("task_progress").
 					Update(updateData).

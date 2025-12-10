@@ -170,7 +170,9 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("INFO: C++実行成功: %s", out.String())
 	response := ResultPayload{Result: out.String()}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.Encode(response)
 }
 
 // --- AIチャットハンドラ ---
@@ -398,7 +400,9 @@ func gradeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(responseMap)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.Encode(responseMap)
 }
 
 // --- 静的ファイル配信ハンドラ ---
@@ -510,7 +514,9 @@ func getMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(newProfile)
 	} else {
 		// 既存データを返す
-		json.NewEncoder(w).Encode(profiles[0])
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		enc.Encode(profiles[0])
 	}
 }
 
@@ -666,7 +672,9 @@ Current Love Level: %d
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.Encode(map[string]string{"status": "success"})
 }
 
 //================================================================

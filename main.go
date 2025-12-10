@@ -201,9 +201,10 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		payload.Code,
 		payload.Message,
 	)
+	currentSystemPrompt := strings.Replace(systemPrompt, "{{current_love}}", fmt.Sprintf("%d", payload.LoveLevel), -1)
 
 	reqMessages := []OpenAIMessage{
-		{Role: "system", Content: systemPrompt},
+		{Role: "system", Content: currentSystemPrompt},
 		{Role: "user", Content: userContent},
 	}
 
@@ -689,9 +690,10 @@ type ResultPayload struct {
 
 // /api/chat へのリクエストボディ
 type ChatPayload struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
-	Task    string `json:"task"`
+	Message   string `json:"message"`
+	Code      string `json:"code"`
+	Task      string `json:"task"`
+	LoveLevel int    `json:"love_level"`
 }
 
 // /api/chat からのレスポンスボディ

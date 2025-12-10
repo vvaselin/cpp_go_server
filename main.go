@@ -555,7 +555,7 @@ func loadSummarySystemPrompt() {
 		summarySystemPrompt = "あなたはユーザーの学習状況を記録するメモリーマネージャーです。JSON形式で出力してください。"
 	} else {
 		summarySystemPrompt = string(content)
-		log.Println("INFO: prompt_summary.txt を読み込みました")
+		//log.Println("INFO: prompt_summary.txt を読み込みました")
 	}
 }
 

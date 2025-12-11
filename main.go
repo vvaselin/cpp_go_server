@@ -294,7 +294,7 @@ func gradeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("DEBUG: UserID=%s, TaskID=%s, Score=%d", p.UserID, p.TaskID, 0)
+	// log.Printf("DEBUG: UserID=%s, TaskID=%s, Score=%d", p.UserID, p.TaskID, 0)
 
 	// AIに送るユーザープロンプトを構築
 	userMessage := fmt.Sprintf(
@@ -341,7 +341,7 @@ func gradeHandler(w http.ResponseWriter, r *http.Request) {
 		if err == nil && len(records) > 0 {
 			// 記録あり: ハイスコア更新チェック
 			oldHighScore := records[0].HighScore
-			log.Printf("INFO: Record found. Old HighScore: %d, Current: %d", oldHighScore, currentScore) // ★ログ追加
+			// log.Printf("INFO: Record found. Old HighScore: %d, Current: %d", oldHighScore, currentScore)
 
 			if currentScore > oldHighScore {
 				bonusLove = 3 // 更新ボーナス
@@ -359,12 +359,12 @@ func gradeHandler(w http.ResponseWriter, r *http.Request) {
 				if upErr != nil {
 					log.Printf("ERROR: Supabase Update failed: %v", upErr)
 				} else {
-					log.Println("INFO: Supabase Update success")
+					// log.Println("INFO: Supabase Update success")
 				}
 			}
 		} else {
 			// 記録なし: 新規作成
-			log.Println("INFO: No record found. Creating new record.") // ★ログ追加
+			// log.Println("INFO: No record found. Creating new record.")
 
 			if currentScore >= 80 {
 				bonusLove = 5 // 初クリアボーナス

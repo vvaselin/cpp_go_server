@@ -196,7 +196,29 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var userMem UserProfile
+	if payload.UserID != "" {
+		var profiles []UserProfile
+		// エラー処理は省略していますが、実戦ではチェックしてください
+		supabaseClient.DB.From("profiles").Select("*").Eq("id", payload.UserID).Execute(&profiles)
+		if len(profiles) > 0 {
+			userMem = profiles[0]
+		}
+	}
+
+	memoryText := "まだ情報がありません。"
+	if userMem.Summary != "" {
+		memoryText = userMem.Summary
+	}
+	weaknessText := "特になし"
+	if len(userMem.Weaknesses) > 0 {
+		weaknessText = strings.Join(userMem.Weaknesses, ", ")
+	}
+
 	currentSystemPrompt := buildSystemPrompt(payload.CharacterID, payload.Mode, payload.LoveLevel)
+
+	currentSystemPrompt = strings.Replace(currentSystemPrompt, "{{user_memory}}", memoryText, -1)
+	currentSystemPrompt = strings.Replace(currentSystemPrompt, "{{user_weaknesses}}", weaknessText, -1)
 
 	// OpenAI APIへのリクエストボディを作成
 	userContent := fmt.Sprintf(
@@ -765,6 +787,7 @@ type ChatPayload struct {
 	LoveLevel   int    `json:"love_level"`
 	CharacterID string `json:"character_id"`
 	Mode        string `json:"mode"`
+	UserID      string `json:"user_id"`
 }
 
 // /api/chat からのレスポンスボディ

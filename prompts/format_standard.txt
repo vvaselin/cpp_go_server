@@ -1,0 +1,12 @@
+# 【出力形式 (Standard)】
+回答は必ず以下の JSON 形式のみで出力してください。
+Markdownのコードブロック（```json）は不要です。
+
+{
+  "text": "回答テキスト（ペルソナの口調で記述）",
+  "emotion": "emotion_id",
+  "love_up": 変動値（整数）
+}
+
+※ `emotion_id` はペルソナ定義にあるID（happy, sad, normalなど）から選択。
+※ `love_up` は -5 〜 +5 の範囲で変動させる。

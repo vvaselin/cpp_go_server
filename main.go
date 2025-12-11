@@ -51,7 +51,7 @@ func main() {
 		log.Println("INFO: Supabase接続完了")
 	}
 
-	loadSystemPrompt()
+	// loadSystemPrompt()
 	loadGradeSystemPrompt()
 	loadSummarySystemPrompt()
 
@@ -196,6 +196,8 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	currentSystemPrompt := buildSystemPrompt(payload.CharacterID, payload.Mode, payload.LoveLevel)
+
 	// OpenAI APIへのリクエストボディを作成
 	userContent := fmt.Sprintf(
 		"【現在の課題】\n%s\n\n【ユーザーのコード】\n%s\n\n【ユーザーのメッセージ】\n%s",
@@ -203,7 +205,6 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		payload.Code,
 		payload.Message,
 	)
-	currentSystemPrompt := strings.Replace(systemPrompt, "{{current_love}}", fmt.Sprintf("%d", payload.LoveLevel), -1)
 
 	reqMessages := []OpenAIMessage{
 		{Role: "system", Content: currentSystemPrompt},
@@ -276,6 +277,12 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 			LoveUp:  0,
 		}
 	}
+
+	if chatRes.Thought != "" {
+		log.Printf("AI Thought: %s", chatRes.Thought)
+		log.Printf("AI Params: %+v", chatRes.Parameters)
+	}
+
 	// クライアント（ティラノ）にJSONを返す
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(chatRes)
@@ -542,6 +549,61 @@ func loadSystemPrompt() {
 	}
 }
 
+func buildSystemPrompt(charID string, mode string, loveLevel int) string {
+	// ベースシステムの読み込み
+	baseBytes, err := os.ReadFile("./prompts/base_system.txt")
+	if err != nil {
+		log.Printf("ERROR: base_system.txt read failed: %v", err)
+		return "あなたはAIアシスタントです。"
+	}
+
+	// ペルソナの読み込み (デフォルトは mocha)
+	if charID == "" {
+		charID = "mocha"
+	}
+	// ディレクトリトラバーサル対策（簡易）
+	charID = filepath.Clean(charID)
+	personaPath := fmt.Sprintf("./prompts/persona_%s.txt", charID)
+
+	personaBytes, err := os.ReadFile(personaPath)
+	if err != nil {
+		log.Printf("WARNING: Persona file '%s' not found. Using default.", personaPath)
+		// ファイルがない場合はデフォルト(mocha)を試す
+		personaBytes, _ = os.ReadFile("./prompts/persona_mocha.txt")
+	}
+
+	// 出力フォーマットの読み込み
+	formatFile := "format_standard.txt"
+	if mode == "thought" || mode == "debug" {
+		formatFile = "format_thought.txt"
+	}
+	formatBytes, err := os.ReadFile("./prompts/" + formatFile)
+	if err != nil {
+		log.Printf("ERROR: Format file '%s' read failed", formatFile)
+	}
+
+	// 結合
+	fullPrompt := string(baseBytes) + "\n\n" + string(personaBytes) + "\n\n" + string(formatBytes)
+
+	// レベルを計算して、プロンプトに詳しい情報を埋め込む
+	levelInfo := "Lv.1: 警戒と緊張" // デフォルト
+	if loveLevel >= 91 {
+		levelInfo = "Lv.5: 唯一のパートナー"
+	} else if loveLevel >= 71 {
+		levelInfo = "Lv.4: 親愛と好意"
+	} else if loveLevel >= 51 {
+		levelInfo = "Lv.3: 信頼と笑顔"
+	} else if loveLevel >= 21 {
+		levelInfo = "Lv.2: 慣れと安堵"
+	}
+
+	// AIに「数値」だけでなく「レベルの定義」ごと渡す
+	loveStatus := fmt.Sprintf("%d (%s)", loveLevel, levelInfo)
+	fullPrompt = strings.Replace(fullPrompt, "{{current_love}}", loveStatus, -1)
+
+	return fullPrompt
+}
+
 func loadGradeSystemPrompt() {
 	content, err := os.ReadFile("./prompts/prompt_grade.txt")
 	if err != nil {
@@ -697,14 +759,25 @@ type ResultPayload struct {
 
 // /api/chat へのリクエストボディ
 type ChatPayload struct {
-	Message   string `json:"message"`
-	Code      string `json:"code"`
-	Task      string `json:"task"`
-	LoveLevel int    `json:"love_level"`
+	Message     string `json:"message"`
+	Code        string `json:"code"`
+	Task        string `json:"task"`
+	LoveLevel   int    `json:"love_level"`
+	CharacterID string `json:"character_id"`
+	Mode        string `json:"mode"`
 }
 
 // /api/chat からのレスポンスボディ
 type ChatResponse struct {
+	Thought    string   `json:"thought"` // 思考プロセス
+	Parameters struct { // 感情パラメータ
+		Joy      int `json:"joy"`
+		Trust    int `json:"trust"`
+		Fear     int `json:"fear"`
+		Anger    int `json:"anger"`
+		Shy      int `json:"shy"`
+		Surprise int `json:"surprise"`
+	} `json:"parameters"`
 	Text    string `json:"text"`
 	Emotion string `json:"emotion"`
 	LoveUp  int    `json:"love_up"`

@@ -394,8 +394,8 @@ func gradeHandler(w http.ResponseWriter, r *http.Request) {
 		"score":         gradeRes.Score,
 		"reason":        gradeRes.Reason,
 		"improvement":   gradeRes.Improvement,
-		"bonus_love":    bonusLove,   // ★追加
-		"is_new_record": isNewRecord, // ★追加
+		"bonus_love":    bonusLove,
+		"is_new_record": isNewRecord,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -215,12 +215,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		weaknessText = strings.Join(userMem.Weaknesses, ", ")
 	}
 
-	mode := "standard"
-	if os.Getenv("AI_DEBUG_MODE") == "true" {
-		mode = "thought"
-	}
-
-	currentSystemPrompt := buildSystemPrompt(payload.CharacterID, mode, payload.LoveLevel)
+	currentSystemPrompt := buildSystemPrompt(payload.CharacterID, "thought", payload.LoveLevel)
 
 	currentSystemPrompt = strings.Replace(currentSystemPrompt, "{{user_memory}}", memoryText, -1)
 	currentSystemPrompt = strings.Replace(currentSystemPrompt, "{{user_weaknesses}}", weaknessText, -1)
@@ -305,9 +300,11 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if mode == "thought" && chatRes.Thought != "" {
-		log.Printf("AI Thought: %s", chatRes.Thought)
-		log.Printf("AI Params: %+v", chatRes.Parameters)
+	if os.Getenv("AI_DEBUG_MODE") == "true" {
+		if chatRes.Thought != "" {
+			log.Printf("🧠Thought: %s", chatRes.Thought)
+			log.Printf("📊Params: %+v", chatRes.Parameters)
+		}
 	}
 
 	// クライアント（ティラノ）にJSONを返す

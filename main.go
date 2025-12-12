@@ -215,7 +215,12 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		weaknessText = strings.Join(userMem.Weaknesses, ", ")
 	}
 
-	currentSystemPrompt := buildSystemPrompt(payload.CharacterID, payload.Mode, payload.LoveLevel)
+	mode := "standard"
+	if os.Getenv("AI_DEBUG_MODE") == "true" {
+		mode = "thought"
+	}
+
+	currentSystemPrompt := buildSystemPrompt(payload.CharacterID, mode, payload.LoveLevel)
 
 	currentSystemPrompt = strings.Replace(currentSystemPrompt, "{{user_memory}}", memoryText, -1)
 	currentSystemPrompt = strings.Replace(currentSystemPrompt, "{{user_weaknesses}}", weaknessText, -1)
@@ -286,7 +291,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	if len(openAIResp.Choices) > 0 {
 		aiRawContent = openAIResp.Choices[0].Message.Content
 	}
-	// Markdown記法 (```json ... ```) が含まれている場合に除去する
+
 	aiCleanContent := cleanJSONString(aiRawContent)
 	// JSON文字列を構造体にパース
 	var chatRes ChatResponse
@@ -300,7 +305,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if chatRes.Thought != "" {
+	if mode == "thought" && chatRes.Thought != "" {
 		log.Printf("AI Thought: %s", chatRes.Thought)
 		log.Printf("AI Params: %+v", chatRes.Parameters)
 	}
@@ -785,7 +790,6 @@ type ChatPayload struct {
 	Task        string `json:"task"`
 	LoveLevel   int    `json:"love_level"`
 	CharacterID string `json:"character_id"`
-	Mode        string `json:"mode"`
 	UserID      string `json:"user_id"`
 }
 

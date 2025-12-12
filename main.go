@@ -627,7 +627,7 @@ func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 }
 
 func loadGradeSystemPrompt() {
-	content, err := os.ReadFile("./prompts/prompt_grade.txt")
+	content, err := os.ReadFile("./prompts/system/prompt_grade.txt")
 	if err != nil {
 		log.Println("prompt_grade.txtの読み込み失敗。デフォルトを使用。")
 		gradeSystemPrompt = "あなたは採点官です。JSONで採点してください。"
@@ -638,8 +638,7 @@ func loadGradeSystemPrompt() {
 
 // loadSummarySystemPrompt は .txt から要約用プロンプトを読み込みます
 func loadSummarySystemPrompt() {
-	// ファイル名は実際の場所に合わせる (例: ./prompts/prompt_summary.txt)
-	content, err := os.ReadFile("./prompts/prompt_summary.txt")
+	content, err := os.ReadFile("./prompts/system/prompt_summary.txt")
 	if err != nil {
 		log.Println("警告: prompt_summary.txtの読み込み失敗。デフォルトを使用。")
 		summarySystemPrompt = "あなたはユーザーの学習状況を記録するメモリーマネージャーです。JSON形式で出力してください。"

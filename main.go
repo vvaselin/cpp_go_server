@@ -737,18 +737,11 @@ func handleTalk(w http.ResponseWriter, r *http.Request) {
 
 	// リクエストのデコード
 	var req TalkRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("JSON Decode Error: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
+	json.NewDecoder(r.Body).Decode(&req)
 
-	// 1. システムプロンプトの構築
-	// 複数のファイルを組み合わせて強力な指示を作ります
-	systemInstruction, err := buildTalkSystemPrompt(req)
+	systemInstruction, err := buildTalkSystemPrompt("mocha", req.Mode, req.LoveLevel)
 	if err != nil {
-		log.Printf("Prompt Build Error: %v", err)
-		http.Error(w, "Server error (Prompt)", http.StatusInternalServerError)
+		http.Error(w, "Prompt build error", 500)
 		return
 	}
 
@@ -794,68 +787,87 @@ func handleTalk(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(jsonResponseStr))
 }
 
-// 複数のファイルを動的に組み合わせてプロンプトを作る関数
-func buildTalkSystemPrompt(req TalkRequest) (string, error) {
-	var builder strings.Builder
-
-	// 1. 基本システム (思考ロジック等)
-	// ---------------------------------------------------------
-	common, err := os.ReadFile(filepath.Join("prompts", "system_common.txt"))
+// お喋りモード用のシステムプロンプト構築関数
+func buildTalkSystemPrompt(charID string, mode string, loveLevel int) (string, error) {
+	// 1. ベースシステムの読み込み
+	// (base_system.txtには {{user_memory}} 等のプレースホルダがありますが、
+	//  今回は単純化のため、それらが残っていてもAIが無視するようにするか、
+	//  strings.Replaceですべて空文字に置換して消してしまうのが安全です)
+	baseBytes, err := os.ReadFile("./prompts/base_system.txt")
 	if err != nil {
-		return "", fmt.Errorf("failed to read system_common.txt: %v", err)
+		log.Printf("WARNING: base_system.txt not found: %v", err)
+		baseBytes = []byte("あなたはAIアシスタントです。")
 	}
-	builder.Write(common)
-	builder.WriteString("\n\n")
+	basePrompt := string(baseBytes)
 
-	// 2. ペルソナ定義 (将来的に req.CharacterID で切り替え可能)
-	// ---------------------------------------------------------
-	// 現状はモカ固定だが、リクエストにキャラIDがあればそれを使う設計
-	charID := "mocha"
-	// if req.CharacterID != "" { charID = req.CharacterID }
+	// 不要なプレースホルダを掃除 (base_system.txt用)
+	// TalkAPIで使わない変数は空文字にしておく
+	replacer := strings.NewReplacer(
+		"{{user_memory}}", "特になし",
+		"{{user_weaknesses}}", "特になし",
+		"{{prev_params}}", "特になし",
+		"{{prev_output}}", "特になし",
+	)
+	basePrompt = replacer.Replace(basePrompt)
 
-	personaPath := filepath.Join("prompts", fmt.Sprintf("persona_%s.txt", charID))
-	persona, err := os.ReadFile(personaPath)
+	// 2. ペルソナの読み込み
+	if charID == "" {
+		charID = "mocha"
+	}
+	// ディレクトリトラバーサル対策
+	charID = filepath.Base(charID)
+	personaPath := fmt.Sprintf("./prompts/persona_%s.txt", charID)
+	personaBytes, err := os.ReadFile(personaPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read persona file (%s): %v", personaPath, err)
+		log.Printf("WARNING: Persona file '%s' not found. Using default.", personaPath)
+		personaBytes, _ = os.ReadFile("./prompts/persona_mocha.txt")
 	}
-	builder.Write(persona)
-	builder.WriteString("\n\n")
 
-	// 3. モード別指示 (req.Mode に応じて切り替え)
-	// ---------------------------------------------------------
+	// 3. モード別指示の読み込み
 	modeFile := "mode_chat.txt" // デフォルト
-	if req.Mode == "quiz" {
+	if mode == "quiz" {
 		modeFile = "mode_quiz.txt"
 	}
-
-	modeInstruction, err := os.ReadFile(filepath.Join("prompts", modeFile))
+	modeBytes, err := os.ReadFile(filepath.Join("prompts", modeFile))
 	if err != nil {
-		// モードファイルが見つからない場合は致命的ではないのでログだけ出して続行も可
-		log.Printf("Warning: mode file %s not found", modeFile)
-	} else {
-		builder.Write(modeInstruction)
-		builder.WriteString("\n\n")
+		log.Printf("WARNING: Mode file '%s' not found.", modeFile)
 	}
 
-	// 4. 出力フォーマット (JSON定義)
-	// ---------------------------------------------------------
-	format, err := os.ReadFile(filepath.Join("prompts", "system_output_json.txt"))
+	// 4. 出力フォーマット (JSON指定) の読み込み
+	// ここで format_thought.txt の代わりに format_talk_json.txt を使う
+	formatBytes, err := os.ReadFile("./prompts/format_talk_json.txt")
 	if err != nil {
-		return "", fmt.Errorf("failed to read output format: %v", err)
+		return "", fmt.Errorf("format_talk_json.txt read failed: %v", err)
 	}
-	builder.Write(format)
 
-	// 5. 変数置換 (テンプレート処理)
-	// ---------------------------------------------------------
-	finalPrompt := builder.String()
+	// 5. 結合
+	var builder strings.Builder
+	builder.WriteString(basePrompt)
+	builder.WriteString("\n\n")
+	builder.WriteString(string(personaBytes))
+	builder.WriteString("\n\n")
+	builder.WriteString(string(modeBytes))
+	builder.WriteString("\n\n")
+	builder.WriteString(string(formatBytes))
 
-	// {{current_love}} などを実際の値に置換
-	finalPrompt = strings.ReplaceAll(finalPrompt, "{{current_love}}", fmt.Sprintf("%d", req.LoveLevel))
+	fullPrompt := builder.String()
 
-	// 他にも置換したい変数があればここに追加
-	// finalPrompt = strings.ReplaceAll(finalPrompt, "{{user_name}}", req.UserName)
+	// 6. 好感度レベルの埋め込み logic
+	levelInfo := "Lv.1: 警戒と緊張"
+	if loveLevel >= 91 {
+		levelInfo = "Lv.5: 唯一のパートナー"
+	} else if loveLevel >= 71 {
+		levelInfo = "Lv.4: 親愛と好意"
+	} else if loveLevel >= 51 {
+		levelInfo = "Lv.3: 信頼と笑顔"
+	} else if loveLevel >= 21 {
+		levelInfo = "Lv.2: 慣れと安堵"
+	}
 
-	return finalPrompt, nil
+	loveStatus := fmt.Sprintf("%d (%s)", loveLevel, levelInfo)
+	fullPrompt = strings.ReplaceAll(fullPrompt, "{{current_love}}", loveStatus)
+
+	return fullPrompt, nil
 }
 
 //================================================================

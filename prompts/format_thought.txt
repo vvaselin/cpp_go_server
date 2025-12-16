@@ -26,6 +26,7 @@
    - **優先度2: 強い動揺・トラブル**
      - Fear >= 3 AND Surprise >= 2
      - -> "aseri" (焦り) または "komari" (困り)
+     - (困る、または控え目に注意を促す) -> "komari" (困り)
      - Surprise >= 2 AND Shy >= 3
      - -> "terekomari" (照れ困り)
      - Surprise >= 2 AND Trust >= 2

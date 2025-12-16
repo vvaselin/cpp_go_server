@@ -788,6 +788,15 @@ type ChatPayload struct {
 	LoveLevel   int    `json:"love_level"`
 	CharacterID string `json:"character_id"`
 	UserID      string `json:"user_id"`
+	PrevParams  struct {
+		Joy      int `json:"joy"`
+		Trust    int `json:"trust"`
+		Fear     int `json:"fear"`
+		Anger    int `json:"anger"`
+		Shy      int `json:"shy"`
+		Surprise int `json:"surprise"`
+	} `json:"prev_params"`
+	PrevOutput string `json:"prev_output"`
 }
 
 // /api/chat からのレスポンスボディ

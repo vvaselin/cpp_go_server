@@ -18,16 +18,23 @@
    以下の「優先順位」に従って判定し、最初に当てはまった条件のIDを採用すること。
 
    - **優先度1: 拒絶・不快 (Safety Valve)**
-     - Anger >= 4 OR (Fear >= 4 AND Trust <= 2)
+     - Anger >= 4 AND Trust <= 2
      - -> "iya" (拒絶) または "akire" (呆れ)
+     - Fear >= 1 AND Trust <= 1
+     - -> "kowai" (恐怖) または "donbiki" (ドン引き)
 
    - **優先度2: 強い動揺・トラブル**
      - Fear >= 3 AND Surprise >= 2
      - -> "aseri" (焦り) または "komari" (困り)
+     - Surprise >= 2 AND Shy >= 3
+     - -> "terekomari" (照れ困り)
+     - Surprise >= 2 AND Trust >= 2
+     - -> "surprise" (驚き)
+     - (失敗時) -> "frustration"(悔しがり)
 
    - **優先度3: 複合的なポジティブ (Complex Positive)**
      - Joy >= 3 AND Shy >= 3
-     - -> "terekomari" (照れ困り) または "tere" (照れ)
+     - -> "tere" (照れ)
      - Joy >= 4 AND Trust >= 4 (好感度Lv.4以上)
      - -> "melt" (とろけ顔/デレ)
 
@@ -39,6 +46,7 @@
      - Anger >= 2 -> "oko" (怒り/拗ね)
      - Fear >= 2 -> "komari" (困り)
      - Joy <= 1 -> "sad" (悲しみ)
+     - (疑う時) -> "doubt"(疑い)
 
    - **優先度6: シンプルなポジティブ**
      - Joy >= 2 -> "happy" (笑顔)

@@ -794,92 +794,68 @@ func handleTalk(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(jsonResponseStr))
 }
 
-// 複数のプロンプトファイルを読み込んで統合する関数
+// 複数のファイルを動的に組み合わせてプロンプトを作る関数
 func buildTalkSystemPrompt(req TalkRequest) (string, error) {
-	// ファイル読み込みヘルパー
-	readFile := func(path string) string {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			log.Printf("Warning: Failed to read %s: %v", path, err)
-			return ""
-		}
-		return string(b)
+	var builder strings.Builder
+
+	// 1. 基本システム (思考ロジック等)
+	// ---------------------------------------------------------
+	common, err := os.ReadFile(filepath.Join("prompts", "system_common.txt"))
+	if err != nil {
+		return "", fmt.Errorf("failed to read system_common.txt: %v", err)
 	}
+	builder.Write(common)
+	builder.WriteString("\n\n")
 
-	// 各種プロンプトの読み込み
-	persona := readFile(filepath.Join("prompts", "persona_mocha.txt"))
-	baseSystem := readFile(filepath.Join("prompts", "base_system.txt"))
-	// format_thought.txt は「思考の出力」を指示しておりJSON出力と競合するため、
-	// 必要な「思考ロジック」部分のみを抜粋して下記にハードコードするか、
-	// お喋りモード専用のルールファイルを作ると良いでしょう。
-	// ここでは baseSystem と persona を核にします。
+	// 2. ペルソナ定義 (将来的に req.CharacterID で切り替え可能)
+	// ---------------------------------------------------------
+	// 現状はモカ固定だが、リクエストにキャラIDがあればそれを使う設計
+	charID := "mocha"
+	// if req.CharacterID != "" { charID = req.CharacterID }
 
-	// モードに応じた指示
-	modeInstruction := ""
+	personaPath := filepath.Join("prompts", fmt.Sprintf("persona_%s.txt", charID))
+	persona, err := os.ReadFile(personaPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read persona file (%s): %v", personaPath, err)
+	}
+	builder.Write(persona)
+	builder.WriteString("\n\n")
+
+	// 3. モード別指示 (req.Mode に応じて切り替え)
+	// ---------------------------------------------------------
+	modeFile := "mode_chat.txt" // デフォルト
 	if req.Mode == "quiz" {
-		modeInstruction = `
-### 現在のモード: クイズモード (Active Quiz Mode)
-- ユーザーから「問題出して」と言われた場合、または会話の流れで復習が必要な場合は、**必ず**クイズを出題してください。
-- クイズは「選択肢(choices)」形式で出力してください。
-- **ユーザーが選択肢を選んで回答した場合**:
-  1. まず正解か不正解かを判定し、モカの口調でリアクションしてください。
-  2. その後、簡単な解説を行ってください。
-  3. 最後に「次の問題いく？それとも休憩？」のように会話を繋げてください。
-  この一連の流れを1回のレスポンスで返してください。ぶっきらぼうに終わらせないでください。
-`
-	} else {
-		modeInstruction = `
-### 現在のモード: 雑談モード (Chat Mode)
-- 学習の息抜きとして、ユーザーと楽しく会話してください。
-- 無理に教えようとせず、共感や興味を示してください。
-`
+		modeFile = "mode_quiz.txt"
 	}
 
-	// 最終的なプロンプトの組み立て
-	prompt := fmt.Sprintf(`
-%s
+	modeInstruction, err := os.ReadFile(filepath.Join("prompts", modeFile))
+	if err != nil {
+		// モードファイルが見つからない場合は致命的ではないのでログだけ出して続行も可
+		log.Printf("Warning: mode file %s not found", modeFile)
+	} else {
+		builder.Write(modeInstruction)
+		builder.WriteString("\n\n")
+	}
 
-%s
+	// 4. 出力フォーマット (JSON定義)
+	// ---------------------------------------------------------
+	format, err := os.ReadFile(filepath.Join("prompts", "system_output_json.txt"))
+	if err != nil {
+		return "", fmt.Errorf("failed to read output format: %v", err)
+	}
+	builder.Write(format)
 
----
-# お喋りモード専用ルール
+	// 5. 変数置換 (テンプレート処理)
+	// ---------------------------------------------------------
+	finalPrompt := builder.String()
 
-## 1. 思考プロセス (Internal Thought)
-応答を生成する前に、以下のプロセスを内部で行ってください（出力には含めないでください）。
-1. **コンテキスト分析**: 直前の会話を見て、今は「出題フェーズ」か「回答判定フェーズ」か判断する。
-2. **感情更新**: 現在の好感度(LoveLevel: %d)に基づき、適切なリアクションを決める。
-3. **キャラ維持**: 「先生」ではなく「人見知りな女子高生 宮舞モカ」としての口調を崩さない。解説時も敬語や硬い説明口調にならず、自分の言葉で話すこと。
+	// {{current_love}} などを実際の値に置換
+	finalPrompt = strings.ReplaceAll(finalPrompt, "{{current_love}}", fmt.Sprintf("%d", req.LoveLevel))
 
-%s
+	// 他にも置換したい変数があればここに追加
+	// finalPrompt = strings.ReplaceAll(finalPrompt, "{{user_name}}", req.UserName)
 
-## 2. 出力フォーマット (JSON ONLY)
-**必ず** 以下のJSON形式のみを出力してください。Markdownや思考のテキストは一切含めないでください。
-
-{
-  "script": [
-    { 
-      "type": "emotion", 
-      "content": "表情ID (normal, happy, angry, sad, doya, tere, surprise, aseri, akire, doubt, huhun, iya, komari, melt)" 
-    },
-    { 
-      "type": "text", 
-      "content": "宮舞モカのセリフ。親しみを込めて。" 
-    },
-    { 
-      "type": "choices", 
-      "choices": [ 
-         { "label": "選択肢の表示名", "value": "送信する値" }
-      ]
-    }
-  ]
-}
-
-※ "choices" はクイズの出題時や、ユーザーに選択を迫るときのみ含めてください。
-※ クイズの正解判定時などは、"text" を複数回使って「判定」→「解説」→「次へ」とメッセージを分けると自然です。
-
-`, persona, baseSystem, req.LoveLevel, modeInstruction)
-
-	return prompt, nil
+	return finalPrompt, nil
 }
 
 //================================================================

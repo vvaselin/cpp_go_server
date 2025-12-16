@@ -721,8 +721,11 @@ Current Love Level: %d
 	enc.Encode(map[string]string{"status": "success"})
 }
 
+// 会話履歴の最大保持数（APIトークン節約のため）
+const MaxHistorySize = 10
+
 func handleTalk(w http.ResponseWriter, r *http.Request) {
-	// CORSヘッダー
+	// CORS設定
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -732,98 +735,151 @@ func handleTalk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	// リクエストのデコード
 	var req TalkRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("JSON Decode Error: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// 1. ペルソナの読み込み
-	// ※ 毎回読み込むのが非効率な場合は、main関数で起動時にグローバル変数に読み込んでください
-	personaPath := filepath.Join("prompts", "persona_mocha.txt")
-	personaBytes, err := os.ReadFile(personaPath)
+	// 1. システムプロンプトの構築
+	// 複数のファイルを組み合わせて強力な指示を作ります
+	systemInstruction, err := buildTalkSystemPrompt(req)
 	if err != nil {
-		log.Printf("Error reading persona file: %v", err)
-		http.Error(w, "Server error (Persona)", http.StatusInternalServerError)
+		log.Printf("Prompt Build Error: %v", err)
+		http.Error(w, "Server error (Prompt)", http.StatusInternalServerError)
 		return
 	}
-	persona := string(personaBytes)
 
-	// 2. システムプロンプトの構築
-	// JSON形式で返すように厳密に指示します
-	systemInstruction := fmt.Sprintf(`
-%s
-
-あなたはプログラミング学習アプリのパートナー「宮舞モカ」です。
-ユーザーと会話を行い、学習意欲を高めたり、理解度を確認するクイズを出してください。
-
-現在のモード: %s
-現在の好感度: %d
-
-【重要】
-回答は必ず以下のJSONフォーマット(Valid JSON)のみを出力してください。
-マークダウン記法（`+"```json ... ```"+`）は含めないでください。
-テキストを表示する前には、必ず文脈に合った「表情(emotion)」を指定してください。
-
-## JSON出力例
-{
-  "script": [
-    { "type": "emotion", "content": "happy" },
-    { "type": "text", "content": "わあ、正解だよ！すごいね！" },
-    { "type": "choices", "choices": [ 
-        { "label": "ありがとう", "value": "thanks" }, 
-        { "label": "次の問題へ", "value": "next" } 
-      ] 
-    }
-  ]
-}
-
-## 使用可能な表情ID (emotion)
-normal, happy, angry, sad, doya, tere, surprise, aseri, akire, doubt, huhun, iya, komari, melt
-`, persona, req.Mode, req.LoveLevel)
-
-	// 3. メッセージリストの作成 (System + History + User)
+	// 2. メッセージリストの作成
 	var messages []OpenAIMessage
-
-	// System Prompt
 	messages = append(messages, OpenAIMessage{
 		Role:    "system",
 		Content: systemInstruction,
 	})
 
-	// History (過去のやり取り)
-	// ※ トークン節約のため、直近10件程度に絞る処理を入れても良い
-	for _, h := range req.History {
+	// 3. 会話履歴の追加（直近N件に絞る）
+	// これを行わないと、会話が続くとトークン制限でエラーになり、応答が返ってこなくなります
+	startIdx := 0
+	if len(req.History) > MaxHistorySize {
+		startIdx = len(req.History) - MaxHistorySize
+	}
+
+	for i := startIdx; i < len(req.History); i++ {
+		msg := req.History[i]
 		messages = append(messages, OpenAIMessage{
-			Role:    h.Role,
-			Content: h.Content,
+			Role:    msg.Role,
+			Content: msg.Content,
 		})
 	}
 
-	// Current User Message
+	// 4. 現在のユーザー入力を追加
 	messages = append(messages, OpenAIMessage{
 		Role:    "user",
 		Content: req.Message,
 	})
 
-	// 4. OpenAI呼び出し
+	// 5. OpenAI呼び出し
 	jsonResponseStr, err := callOpenAITalk(messages)
 	if err != nil {
 		log.Printf("OpenAI API Error: %v", err)
-		http.Error(w, "AI generation error", http.StatusInternalServerError)
+		// クライアント側でエラー表示できるようにJSONで返す手もありますが、ここでは500を返します
+		http.Error(w, fmt.Sprintf("AI generation error: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// 5. そのままクライアントへ返す
-	// AIが生成したJSONが正しいかチェックしてから返すとより安全です
+	// 6. 応答を返す
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(jsonResponseStr))
+}
+
+// 複数のプロンプトファイルを読み込んで統合する関数
+func buildTalkSystemPrompt(req TalkRequest) (string, error) {
+	// ファイル読み込みヘルパー
+	readFile := func(path string) string {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("Warning: Failed to read %s: %v", path, err)
+			return ""
+		}
+		return string(b)
+	}
+
+	// 各種プロンプトの読み込み
+	persona := readFile(filepath.Join("prompts", "persona_mocha.txt"))
+	baseSystem := readFile(filepath.Join("prompts", "base_system.txt"))
+	// format_thought.txt は「思考の出力」を指示しておりJSON出力と競合するため、
+	// 必要な「思考ロジック」部分のみを抜粋して下記にハードコードするか、
+	// お喋りモード専用のルールファイルを作ると良いでしょう。
+	// ここでは baseSystem と persona を核にします。
+
+	// モードに応じた指示
+	modeInstruction := ""
+	if req.Mode == "quiz" {
+		modeInstruction = `
+### 現在のモード: クイズモード (Active Quiz Mode)
+- ユーザーから「問題出して」と言われた場合、または会話の流れで復習が必要な場合は、**必ず**クイズを出題してください。
+- クイズは「選択肢(choices)」形式で出力してください。
+- **ユーザーが選択肢を選んで回答した場合**:
+  1. まず正解か不正解かを判定し、モカの口調でリアクションしてください。
+  2. その後、簡単な解説を行ってください。
+  3. 最後に「次の問題いく？それとも休憩？」のように会話を繋げてください。
+  この一連の流れを1回のレスポンスで返してください。ぶっきらぼうに終わらせないでください。
+`
+	} else {
+		modeInstruction = `
+### 現在のモード: 雑談モード (Chat Mode)
+- 学習の息抜きとして、ユーザーと楽しく会話してください。
+- 無理に教えようとせず、共感や興味を示してください。
+`
+	}
+
+	// 最終的なプロンプトの組み立て
+	prompt := fmt.Sprintf(`
+%s
+
+%s
+
+---
+# お喋りモード専用ルール
+
+## 1. 思考プロセス (Internal Thought)
+応答を生成する前に、以下のプロセスを内部で行ってください（出力には含めないでください）。
+1. **コンテキスト分析**: 直前の会話を見て、今は「出題フェーズ」か「回答判定フェーズ」か判断する。
+2. **感情更新**: 現在の好感度(LoveLevel: %d)に基づき、適切なリアクションを決める。
+3. **キャラ維持**: 「先生」ではなく「人見知りな女子高生 宮舞モカ」としての口調を崩さない。解説時も敬語や硬い説明口調にならず、自分の言葉で話すこと。
+
+%s
+
+## 2. 出力フォーマット (JSON ONLY)
+**必ず** 以下のJSON形式のみを出力してください。Markdownや思考のテキストは一切含めないでください。
+
+{
+  "script": [
+    { 
+      "type": "emotion", 
+      "content": "表情ID (normal, happy, angry, sad, doya, tere, surprise, aseri, akire, doubt, huhun, iya, komari, melt)" 
+    },
+    { 
+      "type": "text", 
+      "content": "宮舞モカのセリフ。親しみを込めて。" 
+    },
+    { 
+      "type": "choices", 
+      "choices": [ 
+         { "label": "選択肢の表示名", "value": "送信する値" }
+      ]
+    }
+  ]
+}
+
+※ "choices" はクイズの出題時や、ユーザーに選択を迫るときのみ含めてください。
+※ クイズの正解判定時などは、"text" を複数回使って「判定」→「解説」→「次へ」とメッセージを分けると自然です。
+
+`, persona, baseSystem, req.LoveLevel, modeInstruction)
+
+	return prompt, nil
 }
 
 //================================================================

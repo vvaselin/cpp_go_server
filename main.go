@@ -20,9 +20,6 @@ import (
 
 // --- グローバル設定 ---
 
-// systemPrompt はAIチャットで使用するシステムプロンプトです。
-var systemPrompt string
-
 // staticDir は配信するティラノスクリプトのプロジェクトディレクトリです。
 const staticDir = "../tyranoedu"
 
@@ -68,6 +65,8 @@ func main() {
 	// 記憶ハンドラ
 	http.Handle("/api/memory", corsMiddleware(http.HandlerFunc(getMemoryHandler)))
 	http.Handle("/api/summarize", corsMiddleware(http.HandlerFunc(summarizeHandler)))
+	// トークハンドラ
+	http.HandleFunc("/api/talk", handleTalk)
 
 	// --- サーバー起動 ---
 	// myIP := os.Getenv("MY_IPV4_ADDRESS")
@@ -562,17 +561,6 @@ func loadEnv() {
 	}
 }
 
-// loadSystemPrompt は .txt からシステムプロンプトを読み込み、グローバル変数にセット
-func loadSystemPrompt() {
-	content, err := os.ReadFile("./prompts/mocha_cool.txt")
-	if err != nil {
-		log.Println("prompt.txtの読み込みに失敗しました。デフォルトのプロンプトを使用します。")
-		systemPrompt = "あなたは親切なAIアシスタントです。"
-	} else {
-		systemPrompt = string(content)
-	}
-}
-
 func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 	// ベースシステムの読み込み
 	baseBytes, err := os.ReadFile("./prompts/base_system.txt")
@@ -648,34 +636,6 @@ func loadSummarySystemPrompt() {
 		summarySystemPrompt = string(content)
 		//log.Println("INFO: prompt_summary.txt を読み込みました")
 	}
-}
-
-// 記憶ファイルを読み込むヘルパー関数
-func loadMemory() (UserMemory, error) {
-	var mem UserMemory
-	// デフォルト値
-	mem.Summary = "まだ会話をしていません。"
-	mem.LearnedTopics = []string{}
-	mem.Weaknesses = []string{}
-
-	file, err := os.ReadFile(MEMORY_FILE)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return mem, nil // ファイルがない場合は初期値を返す
-		}
-		return mem, err
-	}
-	err = json.Unmarshal(file, &mem)
-	return mem, err
-}
-
-// 記憶ファイルを保存するヘルパー関数
-func saveMemory(mem UserMemory) error {
-	data, err := json.MarshalIndent(mem, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(MEMORY_FILE, data, 0644)
 }
 
 // POST /api/summarize
@@ -759,6 +719,111 @@ Current Love Level: %d
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	enc.Encode(map[string]string{"status": "success"})
+}
+
+func handleTalk(w http.ResponseWriter, r *http.Request) {
+	// CORSヘッダー
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// リクエストのデコード
+	var req TalkRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// 1. ペルソナの読み込み
+	// ※ 毎回読み込むのが非効率な場合は、main関数で起動時にグローバル変数に読み込んでください
+	personaPath := filepath.Join("prompts", "persona_mocha.txt")
+	personaBytes, err := os.ReadFile(personaPath)
+	if err != nil {
+		log.Printf("Error reading persona file: %v", err)
+		http.Error(w, "Server error (Persona)", http.StatusInternalServerError)
+		return
+	}
+	persona := string(personaBytes)
+
+	// 2. システムプロンプトの構築
+	// JSON形式で返すように厳密に指示します
+	systemInstruction := fmt.Sprintf(`
+%s
+
+あなたはプログラミング学習アプリのパートナー「宮舞モカ」です。
+ユーザーと会話を行い、学習意欲を高めたり、理解度を確認するクイズを出してください。
+
+現在のモード: %s
+現在の好感度: %d
+
+【重要】
+回答は必ず以下のJSONフォーマット(Valid JSON)のみを出力してください。
+マークダウン記法（`+"```json ... ```"+`）は含めないでください。
+テキストを表示する前には、必ず文脈に合った「表情(emotion)」を指定してください。
+
+## JSON出力例
+{
+  "script": [
+    { "type": "emotion", "content": "happy" },
+    { "type": "text", "content": "わあ、正解だよ！すごいね！" },
+    { "type": "choices", "choices": [ 
+        { "label": "ありがとう", "value": "thanks" }, 
+        { "label": "次の問題へ", "value": "next" } 
+      ] 
+    }
+  ]
+}
+
+## 使用可能な表情ID (emotion)
+normal, happy, angry, sad, doya, tere, surprise, aseri, akire, doubt, huhun, iya, komari, melt
+`, persona, req.Mode, req.LoveLevel)
+
+	// 3. メッセージリストの作成 (System + History + User)
+	var messages []OpenAIMessage
+
+	// System Prompt
+	messages = append(messages, OpenAIMessage{
+		Role:    "system",
+		Content: systemInstruction,
+	})
+
+	// History (過去のやり取り)
+	// ※ トークン節約のため、直近10件程度に絞る処理を入れても良い
+	for _, h := range req.History {
+		messages = append(messages, OpenAIMessage{
+			Role:    h.Role,
+			Content: h.Content,
+		})
+	}
+
+	// Current User Message
+	messages = append(messages, OpenAIMessage{
+		Role:    "user",
+		Content: req.Message,
+	})
+
+	// 4. OpenAI呼び出し
+	jsonResponseStr, err := callOpenAITalk(messages)
+	if err != nil {
+		log.Printf("OpenAI API Error: %v", err)
+		http.Error(w, "AI generation error", http.StatusInternalServerError)
+		return
+	}
+
+	// 5. そのままクライアントへ返す
+	// AIが生成したJSONが正しいかチェックしてから返すとより安全です
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(jsonResponseStr))
 }
 
 //================================================================
@@ -895,6 +960,38 @@ type UserProfile struct {
 	LastUpdated   string   `json:"last_updated"`
 }
 
+// トークモード用
+type TalkRequest struct {
+	UserID    string        `json:"user_id"`
+	Message   string        `json:"message"` // ユーザーの入力
+	History   []ChatMessage `json:"history"` // 会話履歴
+	Mode      string        `json:"mode"`    // "chat" or "quiz"
+	LoveLevel int           `json:"love_level"`
+}
+
+// 会話履歴の要素
+type ChatMessage struct {
+	Role    string `json:"role"` // "user" or "assistant"
+	Content string `json:"content"`
+}
+
+// フロントエンドへのレスポンス (JSONシナリオ)
+type TalkResponse struct {
+	Script []ScriptAction `json:"script"`
+}
+
+// シナリオの1アクション
+type ScriptAction struct {
+	Type    string   `json:"type"`              // "text", "emotion", "choices"
+	Content string   `json:"content,omitempty"` // セリフ または 表情ID
+	Choices []Choice `json:"choices,omitempty"` // 選択肢リスト
+}
+
+type Choice struct {
+	Label string `json:"label"` // ボタンの表示名
+	Value string `json:"value"` // 送信する値
+}
+
 //================================================================
 // ヘルパー関数
 //================================================================
@@ -964,6 +1061,63 @@ func callOpenAI(sysPrompt, userMsg string, useJSON bool) (string, error) {
 	return openAIResp.Choices[0].Message.Content, nil
 }
 
+func callOpenAITalk(messages []OpenAIMessage) (string, error) {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		return "", fmt.Errorf("OPENAI_API_KEY is not set")
+	}
+
+	// リクエストデータの作成
+	reqBody := OpenAIRequest{
+		Model:    "gpt-3.5-turbo-0125", // または "gpt-4-turbo", "gpt-4o" (JSONモード対応モデル必須)
+		Messages: messages,
+		ResponseFormat: &ResponseFormat{
+			Type: "json_object",
+		},
+	}
+
+	reqBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("JSON marshal error: %v", err)
+	}
+
+	// HTTPリクエスト作成
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(reqBytes))
+	if err != nil {
+		return "", fmt.Errorf("request creation error: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	// 送信
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("API call error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API error (Status: %d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// レスポンスのパース
+	var openAIResp OpenAIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
+		return "", fmt.Errorf("response decode error: %v", err)
+	}
+
+	if len(openAIResp.Choices) == 0 {
+		return "", fmt.Errorf("no choices in response")
+	}
+
+	return openAIResp.Choices[0].Message.Content, nil
+}
+
 // cleanJSONString は AIが返したマークダウン記法 (```json ... ```) を除去します
 func cleanJSONString(s string) string {
 	s = strings.TrimSpace(s)
@@ -978,10 +1132,4 @@ func cleanJSONString(s string) string {
 	}
 
 	return strings.TrimSpace(s)
-}
-
-// ヘルパー: 構造体をJSON文字列にする
-func jsonCurrentMem(mem UserMemory) string {
-	b, _ := json.Marshal(mem)
-	return string(b)
 }

@@ -105,87 +105,97 @@ func loadSummarySystemPrompt() {
 	}
 }
 
-// お喋りモード用のシステムプロンプト構築関数
-func buildTalkSystemPrompt(charID string, mode string, loveLevel int) (string, error) {
-	// 1. ベースシステムの読み込み
-	// (base_system.txtには {{user_memory}} 等のプレースホルダがありますが、
-	//  今回は単純化のため、それらが残っていてもAIが無視するようにするか、
-	//  strings.Replaceですべて空文字に置換して消してしまうのが安全です)
-	baseBytes, err := os.ReadFile("./prompts/base_system.txt")
-	if err != nil {
-		log.Printf("WARNING: base_system.txt not found: %v", err)
-		baseBytes = []byte("あなたはAIアシスタントです。")
-	}
-	basePrompt := string(baseBytes)
-
-	// 不要なプレースホルダを掃除 (base_system.txt用)
-	// TalkAPIで使わない変数は空文字にしておく
-	replacer := strings.NewReplacer(
-		"{{user_memory}}", "特になし",
-		"{{user_weaknesses}}", "特になし",
-		"{{prev_params}}", "特になし",
-		"{{prev_output}}", "特になし",
-	)
-	basePrompt = replacer.Replace(basePrompt)
-
-	// 2. ペルソナの読み込み
-	if charID == "" {
-		charID = "mocha"
-	}
-	// ディレクトリトラバーサル対策
-	charID = filepath.Base(charID)
-	personaPath := fmt.Sprintf("./prompts/persona_%s.txt", charID)
-	personaBytes, err := os.ReadFile(personaPath)
-	if err != nil {
-		log.Printf("WARNING: Persona file '%s' not found. Using default.", personaPath)
-		personaBytes, _ = os.ReadFile("./prompts/persona_mocha.txt")
+// クイズモード専用のプロンプト構築
+func buildQuizSystemPrompt(req TalkRequest, profile UserProfile) (string, error) {
+	// ファイル読み込み
+	readFile := func(path string) string {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("Warning: %s not found", path)
+			return ""
+		}
+		return string(b)
 	}
 
-	// 3. モード別指示の読み込み
-	modeFile := "mode_chat.txt" // デフォルト
-	if mode == "quiz" {
-		modeFile = "mode_quiz.txt"
-	}
-	modeBytes, err := os.ReadFile(filepath.Join("prompts", modeFile))
-	if err != nil {
-		log.Printf("WARNING: Mode file '%s' not found.", modeFile)
-	}
+	basePrompt := readFile("./prompts/base_system.txt")
 
-	// 4. 出力フォーマット (JSON指定) の読み込み
-	// ここで format_thought.txt の代わりに format_talk_json.txt を使う
-	formatBytes, err := os.ReadFile("./prompts/format_talk_json.txt")
-	if err != nil {
-		return "", fmt.Errorf("format_talk_json.txt read failed: %v", err)
+	// ペルソナ読み込み (デフォルトmocha)
+	charID := "mocha"
+	personaPrompt := readFile(fmt.Sprintf("./prompts/persona_%s.txt", charID))
+	if personaPrompt == "" {
+		personaPrompt = readFile("./prompts/persona_mocha.txt")
 	}
 
-	// 5. 結合
-	var builder strings.Builder
-	builder.WriteString(basePrompt)
-	builder.WriteString("\n\n")
-	builder.WriteString(string(personaBytes))
-	builder.WriteString("\n\n")
-	builder.WriteString(string(modeBytes))
-	builder.WriteString("\n\n")
-	builder.WriteString(string(formatBytes))
+	modePrompt := readFile("./prompts/mode_quiz.txt")
+	formatPrompt := readFile("./prompts/format_talk_json.txt")
 
-	fullPrompt := builder.String()
+	// 変数準備
+	learnedStr := strings.Join(profile.LearnedTopics, ", ")
+	if learnedStr == "" {
+		learnedStr = "C++の基礎"
+	}
 
-	// 6. 好感度レベルの埋め込み logic
+	weaknessStr := strings.Join(profile.Weaknesses, ", ")
+	if weaknessStr == "" {
+		weaknessStr = "特になし"
+	}
+
+	// 好感度レベルの定義を作成 (ユーザー提供のロジックを適用)
 	levelInfo := "Lv.1: 警戒と緊張"
-	if loveLevel >= 91 {
+	if req.LoveLevel >= 91 {
 		levelInfo = "Lv.5: 唯一のパートナー"
-	} else if loveLevel >= 71 {
+	} else if req.LoveLevel >= 71 {
 		levelInfo = "Lv.4: 親愛と好意"
-	} else if loveLevel >= 51 {
+	} else if req.LoveLevel >= 51 {
 		levelInfo = "Lv.3: 信頼と笑顔"
-	} else if loveLevel >= 21 {
+	} else if req.LoveLevel >= 21 {
 		levelInfo = "Lv.2: 慣れと安堵"
 	}
+	loveStatus := fmt.Sprintf("%d (%s)", req.LoveLevel, levelInfo)
 
-	loveStatus := fmt.Sprintf("%d (%s)", loveLevel, levelInfo)
-	fullPrompt = strings.ReplaceAll(fullPrompt, "{{current_love}}", loveStatus)
+	// 置換処理
 
-	return fullPrompt, nil
+	// mode_quiz.txt の置換
+	modeReplacer := strings.NewReplacer(
+		"{{love_level}}", loveStatus, // 詳細なレベル情報を渡す
+		"{{learned_topics}}", learnedStr,
+		"{{weaknesses}}", weaknessStr,
+		"{{quiz_count}}", fmt.Sprintf("%d", req.QuizCount),
+	)
+	modeInstruction := modeReplacer.Replace(modePrompt)
+
+	// base_system.txt の掃除 (不要なタグを消す)
+	baseCleaner := strings.NewReplacer(
+		"{{user_memory}}", "",
+		"{{user_weaknesses}}", "",
+		"{{current_love}}", loveStatus,
+		"{{prev_params}}", "",
+		"{{prev_output}}", "",
+	)
+	baseSystem := baseCleaner.Replace(basePrompt)
+
+	// 結合
+	// ---------------------------------------------------------
+	var builder strings.Builder
+
+	// 基本システム (Base)
+	builder.WriteString(baseSystem)
+	builder.WriteString("\n\n")
+
+	// クイズモード指示 (Mode)
+	builder.WriteString(modeInstruction)
+	builder.WriteString("\n\n")
+
+	// ペルソナ (Persona) - 優先度高いため後ろに配置
+	builder.WriteString("# キャラクター定義\n")
+	builder.WriteString(personaPrompt)
+	builder.WriteString("\n\n")
+	builder.WriteString("※いかなる場合も、上記のペルソナとしての口調と振る舞いを最優先してください。\n")
+
+	// 出力フォーマット (JSON Format)
+	builder.WriteString(formatPrompt)
+
+	return builder.String(), nil
 }
 
 //================================================================

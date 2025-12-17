@@ -575,52 +575,91 @@ func handleTalk(w http.ResponseWriter, r *http.Request) {
 
 	// リクエストのデコード
 	var req TalkRequest
-	json.NewDecoder(r.Body).Decode(&req)
-
-	systemInstruction, err := buildTalkSystemPrompt("mocha", req.Mode, req.LoveLevel)
-	if err != nil {
-		http.Error(w, "Prompt build error", 500)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("JSON Decode Error: %v", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// 2. メッセージリストの作成
+	// Supabaseからユーザープロファイルを取得
+	// ---------------------------------------------------------
+	var profile UserProfile
+	// デフォルト値
+	profile.LearnedTopics = []string{"C++の基礎", "変数"}
+
+	if supabaseClient != nil && req.UserID != "" && req.UserID != "guest" {
+		var results []UserProfile
+		// "profiles" テーブルから取得
+		err := supabaseClient.DB.From("profiles").Select("*").Eq("id", req.UserID).Execute(&results)
+		if err == nil && len(results) > 0 {
+			profile = results[0]
+		} else {
+			log.Printf("Supabase fetch error or no user: %v", err)
+		}
+	}
+
+	// システムプロンプトの構築
+	// ---------------------------------------------------------
+	systemInstruction, err := buildQuizSystemPrompt(req, profile)
+	if err != nil {
+		log.Printf("Prompt Build Error: %v", err)
+		http.Error(w, "Server error (Prompt)", http.StatusInternalServerError)
+		return
+	}
+
+	// メッセージリストの作成
+	// ---------------------------------------------------------
 	var messages []OpenAIMessage
 	messages = append(messages, OpenAIMessage{
 		Role:    "system",
 		Content: systemInstruction,
 	})
 
-	// 3. 会話履歴の追加（直近N件に絞る）
-	// これを行わないと、会話が続くとトークン制限でエラーになり、応答が返ってこなくなります
-	startIdx := 0
-	if len(req.History) > MaxHistorySize {
-		startIdx = len(req.History) - MaxHistorySize
+	// 履歴の追加 (QUIZ_STARTの場合は履歴を無視して新規開始するのも手だが、文脈維持のため入れる)
+	if req.Message != "QUIZ_START" {
+		// 直近の履歴のみ使用
+		startIdx := 0
+		if len(req.History) > 6 {
+			startIdx = len(req.History) - 6
+		}
+		for i := startIdx; i < len(req.History); i++ {
+			msg := req.History[i]
+			messages = append(messages, OpenAIMessage{
+				Role:    msg.Role,
+				Content: msg.Content,
+			})
+		}
 	}
 
-	for i := startIdx; i < len(req.History); i++ {
-		msg := req.History[i]
-		messages = append(messages, OpenAIMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		})
+	// ユーザーメッセージの追加
+	userMsgContent := req.Message
+	if req.Message == "QUIZ_START" {
+		// AIへの合図（ユーザーには見えない指示）
+		userMsgContent = "復習モードを開始してください。最初の挨拶をして、すぐに第1問を出題してください。"
+	} else if req.QuizCount >= 3 { // 3問終わったあとの回答なら
+		userMsgContent += "\n(これで最後の問題の回答です。解説した後、ねぎらいの言葉をかけて会話を終了する雰囲気にしてください。次の問題は出さないでください)"
 	}
 
-	// 4. 現在のユーザー入力を追加
 	messages = append(messages, OpenAIMessage{
 		Role:    "user",
-		Content: req.Message,
+		Content: userMsgContent,
 	})
 
-	// 5. OpenAI呼び出し
+	// OpenAI呼び出し
 	jsonResponseStr, err := callOpenAITalk(messages)
 	if err != nil {
 		log.Printf("OpenAI API Error: %v", err)
-		// クライアント側でエラー表示できるようにJSONで返す手もありますが、ここでは500を返します
 		http.Error(w, fmt.Sprintf("AI generation error: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// 6. 応答を返す
+	if os.Getenv("AI_DEBUG_MODE") == "true" {
+		log.Println("----- AI Response (Debug) -----")
+		log.Println(jsonResponseStr)
+		log.Println("-------------------------------")
+	}
+
+	// 応答
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(jsonResponseStr))
 }

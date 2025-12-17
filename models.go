@@ -152,6 +152,15 @@ type ChatMessage struct {
 
 // フロントエンドへのレスポンス (JSONシナリオ)
 type TalkResponse struct {
+	Thought    string   `json:"thought"` // 思考プロセス
+	Parameters struct { // 感情パラメータ
+		Joy      int `json:"joy"`
+		Trust    int `json:"trust"`
+		Fear     int `json:"fear"`
+		Anger    int `json:"anger"`
+		Shy      int `json:"shy"`
+		Surprise int `json:"surprise"`
+	} `json:"parameters"`
 	Script     []ScriptAction `json:"script"`
 	EndSession bool           `json:"end_session,omitempty"`
 }

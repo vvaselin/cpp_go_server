@@ -634,10 +634,8 @@ func handleTalk(w http.ResponseWriter, r *http.Request) {
 	// ユーザーメッセージの追加
 	userMsgContent := req.Message
 	if req.Message == "QUIZ_START" {
-		// AIへの合図（ユーザーには見えない指示）
-		userMsgContent = "復習モードを開始してください。最初の挨拶をして、すぐに第1問を出題してください。"
-	} else if req.QuizCount >= 3 { // 3問終わったあとの回答なら
-		userMsgContent += "\n(これで最後の問題の回答です。解説した後、ねぎらいの言葉をかけて会話を終了する雰囲気にしてください。次の問題は出さないでください)"
+		// AIへの合図（簡潔にする）
+		userMsgContent = "QUIZ_START"
 	}
 
 	messages = append(messages, OpenAIMessage{

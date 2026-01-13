@@ -132,6 +132,7 @@ type UserProfile struct {
 	LearnedTopics []string `json:"learned_topics"`
 	Weaknesses    []string `json:"weaknesses"`
 	LastUpdated   string   `json:"last_updated"`
+	Role          string   `json:"role"`
 }
 
 // トークモード用

@@ -661,3 +661,39 @@ func handleTalk(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(jsonResponseStr))
 }
+
+func advisorHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "POST method only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload ChatPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Printf("ERROR(/api/advisor): %v", err)
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	// アドバイザー専用のシステムプロンプトを構築
+	// ここでは単純化のため、専用のファイルから読み込む形式を想定
+	systemPrompt, err := os.ReadFile("./prompts/system/prompt_advisor.txt")
+	if err != nil {
+		systemPrompt = []byte("あなたはプロフェッショナルなC++プログラミング講師です。簡潔かつ技術的に正確なアドバイスをしてください。")
+	}
+
+	userContent := fmt.Sprintf(
+		"【現在の課題】\n%s\n\n【ユーザーのコード】\n%s\n\n【状況・メッセージ】\n%s",
+		payload.Task, payload.Code, payload.Message,
+	)
+
+	// OpenAI 呼び出し (既存の callOpenAI を流用、JSONモードON)
+	aiResponseStr, err := callOpenAI(string(systemPrompt), userContent, true)
+	if err != nil {
+		http.Error(w, "AI Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(cleanJSONString(aiResponseStr)))
+}

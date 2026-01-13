@@ -49,6 +49,9 @@ func main() {
 
 	http.Handle("/api/grade", corsMiddleware(http.HandlerFunc(gradeHandler)))
 
+	// 統制群用
+	http.Handle("/api/advisor", corsMiddleware(http.HandlerFunc(advisorHandler)))
+
 	// 静的ファイル配信ルート（上記以外のすべてのリクエスト）
 	http.Handle("/", staticFileHandler())
 

@@ -543,9 +543,20 @@ Current Love Level: %d
 	newProfileData.LastUpdated = time.Now().Format("2006-01-02 15:04:05")
 
 	// Supabase更新 (Update)
-	// JSONBのカラム(learned_topics等)もうまくマッピングされるはずですが、
-	// エラーが出る場合は map[string]interface{} に変換して渡してください。
-	err = supabaseClient.DB.From("profiles").Update(newProfileData).Eq("id", req.UserID).Execute(nil)
+	updateData := map[string]interface{}{
+		"summary":        newProfileData.Summary,
+		"learned_topics": newProfileData.LearnedTopics,
+		"weaknesses":     newProfileData.Weaknesses,
+		"last_updated":   time.Now().Format("2006-01-02 15:04:05"),
+	}
+
+	// 好感度がリクエストに含まれている場合のみ更新対象に加える
+	if req.CurrentLoveLevel > 0 {
+		updateData["love_level"] = req.CurrentLoveLevel
+	}
+
+	// Supabase更新: 構造体ではなくマップを渡すことで、指定したカラムのみが更新される
+	err = supabaseClient.DB.From("profiles").Update(updateData).Eq("id", req.UserID).Execute(nil)
 
 	if err != nil {
 		log.Printf("ERROR: Save profile failed: %v", err)

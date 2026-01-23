@@ -44,7 +44,7 @@ func main() {
 
 	// --- ハンドラ（ルーティング）設定 ---
 	// APIルート（静的ファイルより先に登録）
-	http.Handle("/execute", corsMiddleware(http.HandlerFunc(executeHandler)))
+	http.Handle("/api/execute", corsMiddleware(http.HandlerFunc(executeHandler)))
 	http.Handle("/api/chat", corsMiddleware(http.HandlerFunc(chatHandler)))
 
 	http.Handle("/api/grade", corsMiddleware(http.HandlerFunc(gradeHandler)))
@@ -72,7 +72,7 @@ func main() {
 		}
 	*/
 
-	log.Println("(API配信: /execute, /api/chat, /api/grade, /api/memory, /api/summarize)")
+	log.Println("(API配信: /api/execute, /api/chat, /api/grade, /api/memory, /api/summarize)")
 	// log.Println("(静的ファイルの配信元: " + staticDir + ")")
 
 	// ListenAndServe はエラーを返すため、ログに出力する

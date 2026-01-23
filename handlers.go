@@ -28,7 +28,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 
 	var payload CodePayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		log.Printf("ERROR(/execute): 不正なJSONを受信: %v", err)
+		log.Printf("ERROR(/api/execute): 不正なJSONを受信: %v", err)
 		http.Error(w, "Bad Request: Invalid JSON", http.StatusBadRequest)
 		return
 	}
@@ -367,7 +367,7 @@ func staticFileHandler() http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// APIルートがここに到達した場合（通常は発生しない）は 404
-		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/execute") {
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/api/execute") {
 			http.NotFound(w, r)
 			return
 		}

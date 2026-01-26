@@ -133,6 +133,7 @@ type UserProfile struct {
 	Weaknesses    []string `json:"weaknesses"`
 	LastUpdated   string   `json:"last_updated"`
 	Role          string   `json:"role"`
+	Name          string   `json:"name"`
 }
 
 // トークモード用

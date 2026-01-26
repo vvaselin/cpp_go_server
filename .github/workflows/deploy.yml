@@ -1,0 +1,26 @@
+name: Auto Deploy
+
+on:
+  push:
+    branches: [ main ] # mainブランチにpushされたら実行
+
+jobs:
+  deploy:
+    runs-on: self-hosted # あなたのPC（Runner）で実行する
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build and Restart Go Server
+        run: |
+          # Goのビルド
+          go build -o server.exe main.go
+          
+          # すでに動いているGoサーバーを止めて再起動
+          Stop-Process -Name "server" -ErrorAction SilentlyContinue
+          Start-Process ./server.exe
+          
+      - name: Update TyranoScript files
+        run: |
+          # Nginxが参照しているフォルダにファイルをコピー
+          Copy-Item -Path "./*" -Destination "C:/Users/rinwa/Desktop/programing/TyranoEdu" -Recurse -Force

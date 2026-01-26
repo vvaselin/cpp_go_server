@@ -1,26 +1,37 @@
-name: Auto Deploy
+name: Full Deploy
 
 on:
   push:
-    branches: [ main ] # mainブランチにpushされたら実行
+    branches: [ main ]
 
 jobs:
   deploy:
-    runs-on: self-hosted # あなたのPC（Runner）で実行する
+    runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build and Restart Go Server
+      # 1. ティラノスクリプトの更新
+      - name: Sync TyranoEdu
         run: |
-          # Goのビルド
-          go build -o server.exe main.go
-          
-          # すでに動いているGoサーバーを止めて再起動
-          Stop-Process -Name "server" -ErrorAction SilentlyContinue
-          Start-Process ./server.exe
-          
-      - name: Update TyranoScript files
+          # パスが統一されていることを前提にコピー
+          Copy-Item -Path "*" -Destination "C:/Users/rinwa/Desktop/programing/TyranoEdu" -Recurse -Force
+
+      # 2. Goサーバーのビルドと再起動
+      - name: Rebuild and Restart Go Server
         run: |
-          # Nginxが参照しているフォルダにファイルをコピー
-          Copy-Item -Path "./*" -Destination "C:/Users/rinwa/Desktop/programing/TyranoEdu" -Recurse -Force
+          cd C:/Users/rinwa/Desktop/programing/cpp_go_server
+          
+          # 実行中の古いサーバーを止める
+          Stop-Process -Name "main" -ErrorAction SilentlyContinue
+          
+          # 【修正ポイント】ファイル名指定ではなく「.」でディレクトリ全体をビルドする
+          go build -o main.exe .
+          
+          # ビルドが成功したか確認してから起動
+          if (Test-Path "./main.exe") {
+              Start-Process -FilePath "./main.exe" -WindowStyle Hidden
+          } else {
+              Write-Error "Build failed: main.exe was not created."
+              exit 1
+          }

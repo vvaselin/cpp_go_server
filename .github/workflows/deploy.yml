@@ -11,27 +11,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1. ティラノスクリプトの更新
-      - name: Sync TyranoEdu
+      # 1. Runnerの作業エリアでGoをビルド
+      - name: Build Go Server
         run: |
-          # パスが統一されていることを前提にコピー
-          Copy-Item -Path "*" -Destination "C:/Users/rinwa/Desktop/programing/TyranoEdu" -Recurse -Force
-
-      # 2. Goサーバーのビルドと再起動
-      - name: Rebuild and Restart Go Server
-        run: |
-          cd C:/Users/rinwa/Desktop/programing/cpp_go_server
-          
-          # 実行中の古いサーバーを止める
-          Stop-Process -Name "main" -ErrorAction SilentlyContinue
-          
-          # 【修正ポイント】ファイル名指定ではなく「.」でディレクトリ全体をビルドする
+          # フォルダ名指定ではなく「.」でビルド（前回のundefinedエラー対策）
           go build -o main.exe .
+
+      # 2. 古いプロセスを止める（デスクトップで動いているもの）
+      - name: Stop Old Server
+        run: |
+          # 以前起動したサーバーが残っていれば終了させる
+          Stop-Process -Name "main" -ErrorAction SilentlyContinue
+
+      # 3. ビルドしたファイルと静的ファイルをデスクトップへ同期（デプロイ）
+      - name: Sync to Desktop
+        run: |
+          # Goサーバーの本体をコピー
+          Copy-Item -Path "./main.exe" -Destination "C:/Users/rinwa/Desktop/programing/go_server/main.exe" -Force
           
-          # ビルドが成功したか確認してから起動
-          if (Test-Path "./main.exe") {
-              Start-Process -FilePath "./main.exe" -WindowStyle Hidden
-          } else {
-              Write-Error "Build failed: main.exe was not created."
-              exit 1
-          }
+          # ティラノスクリプトのファイルをコピー (TyranoEduフォルダへ)
+          # 注：リポジトリが分かれている場合は、該当するリポジトリのみで設定してください
+          # Copy-Item -Path "*" -Destination "C:/Users/rinwa/Desktop/programing/TyranoEdu" -Recurse -Force
+
+      # 4. デスクトップのフォルダから新しいサーバーを起動
+      - name: Start New Server
+        run: |
+          cd C:/Users/rinwa/Desktop/programing/go_server
+          Start-Process -FilePath "./main.exe" -WindowStyle Hidden

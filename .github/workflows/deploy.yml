@@ -15,7 +15,7 @@ jobs:
       - name: Build Go Server
         run: |
           # フォルダ名指定ではなく「.」でビルド（前回のundefinedエラー対策）
-          go build -o main.exe .
+          go build -o goserver.exe .
 
       # 2. 古いプロセスを止める（デスクトップで動いているもの）
       - name: Stop Old Server

@@ -50,7 +50,7 @@
      - (疑う時) -> "doubt"(疑い)
 
    - **優先度6: シンプルなポジティブ**
-     - Joy >= 2 -> "happy" (笑顔)
+     - Joy >= 2 AND Anger < 1 AND Fear< 1 -> "happy" (笑顔)
 
    - **デフォルト**: 
      - "normal" (通常)

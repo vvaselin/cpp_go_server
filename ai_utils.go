@@ -66,19 +66,33 @@ func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 
 	// レベルを計算して、プロンプトに詳しい情報を埋め込む
 	levelInfo := "Lv.1: 警戒と緊張" // デフォルト
-	if loveLevel >= 91 {
+	if loveLevel >= 71 {
 		levelInfo = "Lv.5: 唯一のパートナー"
-	} else if loveLevel >= 71 {
-		levelInfo = "Lv.4: 親愛と好意"
 	} else if loveLevel >= 51 {
+		levelInfo = "Lv.4: 親愛と好意"
+	} else if loveLevel >= 31 {
 		levelInfo = "Lv.3: 信頼と笑顔"
-	} else if loveLevel >= 21 {
+	} else if loveLevel >= 16 {
 		levelInfo = "Lv.2: 慣れと安堵"
 	}
 
 	// AIに「数値」だけでなく「レベルの定義」ごと渡す
 	loveStatus := fmt.Sprintf("%d (%s)", loveLevel, levelInfo)
 	fullPrompt = strings.Replace(fullPrompt, "{{current_love}}", loveStatus, -1)
+
+	strictConstraint := ""
+	if loveLevel < 16 {
+		strictConstraint = "\n\n# 【警告：現在のモードは Lv.1 です】\n" +
+			"- ユーザーを「得体の知れない他人」として扱ってください。\n" +
+			"- 笑顔、リラックス、親しげな口調は「キャラ崩壊」であり、厳禁です。\n" +
+			"- 過去に仲良くした記憶（summary）があっても、「今日はまた怖い」という人見知りが発動していると解釈してください。"
+	} else if loveLevel < 31 {
+		strictConstraint = "\n\n# 【警告：現在のモードは Lv.2 です】\n" +
+			"- 多少慣れましたが、まだ親しい友達ではありません。一定の距離を保ってください。\n" +
+			"- 馴れ馴れしい発言には困惑（komari）やドン引き（donbiki）を返してください。"
+	}
+
+	fullPrompt += strictConstraint
 
 	return fullPrompt
 }

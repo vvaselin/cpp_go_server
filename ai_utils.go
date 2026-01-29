@@ -80,20 +80,6 @@ func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 	loveStatus := fmt.Sprintf("%d (%s)", loveLevel, levelInfo)
 	fullPrompt = strings.Replace(fullPrompt, "{{current_love}}", loveStatus, -1)
 
-	strictConstraint := ""
-	if loveLevel < 16 {
-		strictConstraint = "\n\n# 【警告：現在のモードは Lv.1 です】\n" +
-			"- ユーザーを「得体の知れない他人」として扱ってください。\n" +
-			"- 笑顔、リラックス、親しげな口調は「キャラ崩壊」であり、厳禁です。\n" +
-			"- 過去に仲良くした記憶（summary）があっても、「今日はまた怖い」という人見知りが発動していると解釈してください。"
-	} else if loveLevel < 31 {
-		strictConstraint = "\n\n# 【警告：現在のモードは Lv.2 です】\n" +
-			"- 多少慣れましたが、まだ親しい友達ではありません。一定の距離を保ってください。\n" +
-			"- 馴れ馴れしい発言には困惑（komari）やドン引き（donbiki）を返してください。"
-	}
-
-	fullPrompt += strictConstraint
-
 	return fullPrompt
 }
 

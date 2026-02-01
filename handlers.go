@@ -146,6 +146,11 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	currentSystemPrompt = strings.Replace(currentSystemPrompt, "{{user_memory}}", memoryText, -1)
 	currentSystemPrompt = strings.Replace(currentSystemPrompt, "{{user_weaknesses}}", weaknessText, -1)
 
+	prevParamsJSON, _ := json.Marshal(payload.PrevParams)
+	currentSystemPrompt = strings.Replace(currentSystemPrompt, "{{prev_params}}", string(prevParamsJSON), -1)
+
+	currentSystemPrompt = strings.Replace(currentSystemPrompt, "{{prev_output}}", payload.PrevOutput, -1)
+
 	// OpenAI APIへのリクエストボディを作成
 	userContent := fmt.Sprintf(
 		"【現在の課題】\n%s\n\n【ユーザーのコード】\n%s\n\n【ユーザーのメッセージ】\n%s",
@@ -521,7 +526,7 @@ Current Love Level: %d
 
 [Recent Chat Log]
 %s
-`, string(currentMemJson), req.CurrentLoveLevel, logText)
+`, string(currentMemJson), logText)
 
 	// AI実行 ... (変更なし)
 	newJsonStr, err := callOpenAI(summarySystemPrompt, userPrompt, true)
@@ -537,9 +542,7 @@ Current Love Level: %d
 
 	// AIの結果を信頼しつつ、IDと好感度を確定させる
 	newProfileData.ID = req.UserID
-	if req.CurrentLoveLevel > 0 {
-		newProfileData.LoveLevel = req.CurrentLoveLevel
-	}
+
 	newProfileData.LastUpdated = time.Now().Format("2006-01-02 15:04:05")
 
 	// Supabase更新 (Update)
@@ -548,11 +551,6 @@ Current Love Level: %d
 		"learned_topics": newProfileData.LearnedTopics,
 		"weaknesses":     newProfileData.Weaknesses,
 		"last_updated":   time.Now().Format("2006-01-02 15:04:05"),
-	}
-
-	// 好感度がリクエストに含まれている場合のみ更新対象に加える
-	if req.CurrentLoveLevel > 0 {
-		updateData["love_level"] = req.CurrentLoveLevel
 	}
 
 	// Supabase更新: 構造体ではなくマップを渡すことで、指定したカラムのみが更新される

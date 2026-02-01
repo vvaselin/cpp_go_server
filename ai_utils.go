@@ -29,29 +29,42 @@ func loadEnv() {
 }
 
 func buildSystemPrompt(charID string, mode string, loveLevel int) string {
-	// ベースシステムの読み込み
+	// 1. ベースシステムの読み込み
 	baseBytes, err := os.ReadFile("./prompts/base_system.txt")
 	if err != nil {
 		log.Printf("ERROR: base_system.txt read failed: %v", err)
 		return "あなたはAIアシスタントです。"
 	}
 
-	// ペルソナの読み込み (デフォルトは mocha)
+	// 2. ペルソナの読み込み (ディレクトリ構造に合わせて調整)
 	if charID == "" {
 		charID = "mocha"
 	}
-	// ディレクトリトラバーサル対策（簡易）
 	charID = filepath.Clean(charID)
-	personaPath := fmt.Sprintf("./prompts/persona_%s.txt", charID)
-
+	personaPath := fmt.Sprintf("./prompts/persona/%s.txt", charID)
 	personaBytes, err := os.ReadFile(personaPath)
 	if err != nil {
 		log.Printf("WARNING: Persona file '%s' not found. Using default.", personaPath)
-		// ファイルがない場合はデフォルト(mocha)を試す
-		personaBytes, _ = os.ReadFile("./prompts/persona_mocha.txt")
+		personaBytes, _ = os.ReadFile("./prompts/persona/mocha.txt")
 	}
 
-	// 出力フォーマットの読み込み
+	// 3. 親密度レベルに応じた振る舞い定義の選択 [追加]
+	levelFile := "lv1.txt"
+	if loveLevel >= 71 {
+		levelFile = "lv5.txt"
+	} else if loveLevel >= 51 {
+		levelFile = "lv4.txt"
+	} else if loveLevel >= 31 {
+		levelFile = "lv3.txt"
+	} else if loveLevel >= 16 {
+		levelFile = "lv2.txt"
+	}
+	levelBytes, err := os.ReadFile("./prompts/level/" + levelFile)
+	if err != nil {
+		log.Printf("ERROR: Level file %s read failed", levelFile)
+	}
+
+	// 4. 出力フォーマットの読み込み
 	formatFile := "format_standard.txt"
 	if mode == "thought" || mode == "debug" {
 		formatFile = "format_thought.txt"
@@ -61,24 +74,11 @@ func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 		log.Printf("ERROR: Format file '%s' read failed", formatFile)
 	}
 
-	// 結合
-	fullPrompt := string(baseBytes) + "\n\n" + string(personaBytes) + "\n\n" + string(formatBytes)
-
-	// レベルを計算して、プロンプトに詳しい情報を埋め込む
-	levelInfo := "Lv.1: 警戒と緊張" // デフォルト
-	if loveLevel >= 71 {
-		levelInfo = "Lv.5: 唯一のパートナー"
-	} else if loveLevel >= 51 {
-		levelInfo = "Lv.4: 親愛と好意"
-	} else if loveLevel >= 31 {
-		levelInfo = "Lv.3: 信頼と笑顔"
-	} else if loveLevel >= 16 {
-		levelInfo = "Lv.2: 慣れと安堵"
-	}
-
-	// AIに「数値」だけでなく「レベルの定義」ごと渡す
-	loveStatus := fmt.Sprintf("%d (%s)", loveLevel, levelInfo)
-	fullPrompt = strings.Replace(fullPrompt, "{{current_love}}", loveStatus, -1)
+	// 5. 結合 (数値としての {{current_love}} は渡さず、具体的な定義を埋め込む)
+	fullPrompt := string(baseBytes) + "\n\n" +
+		"# 【キャラクター設定】\n" + string(personaBytes) + "\n\n" +
+		"# 【現在の関係性と振る舞いルール】\n" + string(levelBytes) + "\n\n" +
+		"# 【出力形式】\n" + string(formatBytes)
 
 	return fullPrompt
 }

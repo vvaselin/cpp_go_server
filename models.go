@@ -96,7 +96,6 @@ type SummarizeRequest struct {
 		Username string `json:"username"`
 		Message  string `json:"message"`
 	} `json:"chat_history"`
-	CurrentLoveLevel int `json:"current_love_level"`
 }
 
 // 採点リクエスト用

@@ -135,16 +135,6 @@ type UserProfile struct {
 	Name          string   `json:"name"`
 }
 
-// トークモード用
-type TalkRequest struct {
-	UserID    string        `json:"user_id"`
-	Message   string        `json:"message"` // ユーザーの入力
-	History   []ChatMessage `json:"history"` // 会話履歴
-	Mode      string        `json:"mode"`    // "chat" or "quiz"
-	LoveLevel int           `json:"love_level"`
-	QuizCount int           `json:"quiz_count"`
-}
-
 // 会話履歴の要素
 type ChatMessage struct {
 	Role    string `json:"role"` // "user" or "assistant"

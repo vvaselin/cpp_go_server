@@ -58,8 +58,6 @@ func main() {
 	// 記憶ハンドラ
 	http.Handle("/api/memory", corsMiddleware(http.HandlerFunc(getMemoryHandler)))
 	http.Handle("/api/summarize", corsMiddleware(http.HandlerFunc(summarizeHandler)))
-	// トークハンドラ
-	//http.HandleFunc("/api/talk", handleTalk)
 
 	// --- サーバー起動 ---
 	// myIP := os.Getenv("MY_IPV4_ADDRESS")

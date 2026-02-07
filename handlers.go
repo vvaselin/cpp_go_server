@@ -521,9 +521,6 @@ func summarizeHandler(w http.ResponseWriter, r *http.Request) {
 [Current Memory JSON]
 %s
 
-[Current Status]
-Current Love Level: %d
-
 [Recent Chat Log]
 %s
 `, string(currentMemJson), logText)
@@ -566,109 +563,6 @@ Current Love Level: %d
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	enc.Encode(map[string]string{"status": "success"})
-}
-
-// 会話履歴の最大保持数（APIトークン節約のため）
-const MaxHistorySize = 10
-
-func handleTalk(w http.ResponseWriter, r *http.Request) {
-	// CORS設定
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	// リクエストのデコード
-	var req TalkRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("JSON Decode Error: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// Supabaseからユーザープロファイルを取得
-	// ---------------------------------------------------------
-	var profile UserProfile
-	// デフォルト値
-	profile.LearnedTopics = []string{"C++の基礎", "変数"}
-
-	if supabaseClient != nil && req.UserID != "" && req.UserID != "guest" {
-		var results []UserProfile
-		// "profiles" テーブルから取得
-		err := supabaseClient.DB.From("profiles").Select("*").Eq("id", req.UserID).Execute(&results)
-		if err == nil && len(results) > 0 {
-			profile = results[0]
-		} else {
-			log.Printf("Supabase fetch error or no user: %v", err)
-		}
-	}
-
-	// システムプロンプトの構築
-	// ---------------------------------------------------------
-	systemInstruction, err := buildQuizSystemPrompt(req, profile)
-	if err != nil {
-		log.Printf("Prompt Build Error: %v", err)
-		http.Error(w, "Server error (Prompt)", http.StatusInternalServerError)
-		return
-	}
-
-	// メッセージリストの作成
-	// ---------------------------------------------------------
-	var messages []OpenAIMessage
-	messages = append(messages, OpenAIMessage{
-		Role:    "system",
-		Content: systemInstruction,
-	})
-
-	// 履歴の追加 (QUIZ_STARTの場合は履歴を無視して新規開始するのも手だが、文脈維持のため入れる)
-	if req.Message != "QUIZ_START" {
-		// 直近の履歴のみ使用
-		startIdx := 0
-		if len(req.History) > 6 {
-			startIdx = len(req.History) - 6
-		}
-		for i := startIdx; i < len(req.History); i++ {
-			msg := req.History[i]
-			messages = append(messages, OpenAIMessage{
-				Role:    msg.Role,
-				Content: msg.Content,
-			})
-		}
-	}
-
-	// ユーザーメッセージの追加
-	userMsgContent := req.Message
-	if req.Message == "QUIZ_START" {
-		// AIへの合図（簡潔にする）
-		userMsgContent = "QUIZ_START"
-	}
-
-	messages = append(messages, OpenAIMessage{
-		Role:    "user",
-		Content: userMsgContent,
-	})
-
-	// OpenAI呼び出し
-	jsonResponseStr, err := callOpenAITalk(messages)
-	if err != nil {
-		log.Printf("OpenAI API Error: %v", err)
-		http.Error(w, fmt.Sprintf("AI generation error: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	if os.Getenv("AI_DEBUG_MODE") == "true" {
-		log.Println("----- AI Response (Debug) -----")
-		log.Println(jsonResponseStr)
-		log.Println("-------------------------------")
-	}
-
-	// 応答
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(jsonResponseStr))
 }
 
 func advisorHandler(w http.ResponseWriter, r *http.Request) {

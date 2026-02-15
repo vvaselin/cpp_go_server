@@ -235,6 +235,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		if chatRes.Thought != "" {
 			log.Printf("Thought: %s", chatRes.Thought)
 			log.Printf("Params: %+v", chatRes.Parameters)
+			log.Printf("Params: %d", chatRes.LoveUp)
 		}
 	}
 

@@ -52,11 +52,11 @@ func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 	levelFile := "lv1.txt"
 	if loveLevel >= 71 {
 		levelFile = "lv5.txt"
-	} else if loveLevel >= 51 {
+	} else if loveLevel >= 41 {
 		levelFile = "lv4.txt"
-	} else if loveLevel >= 31 {
+	} else if loveLevel >= 26 {
 		levelFile = "lv3.txt"
-	} else if loveLevel >= 16 {
+	} else if loveLevel >= 11 {
 		levelFile = "lv2.txt"
 	}
 	levelBytes, err := os.ReadFile("./prompts/level/" + levelFile)

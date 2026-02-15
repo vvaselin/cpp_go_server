@@ -29,26 +29,29 @@ func loadEnv() {
 }
 
 func buildSystemPrompt(charID string, mode string, loveLevel int) string {
-	// 1. ベースシステムの読み込み
+	// ベースシステムの読み込み
 	baseBytes, err := os.ReadFile("./prompts/base_system.txt")
 	if err != nil {
 		log.Printf("ERROR: base_system.txt read failed: %v", err)
 		return "あなたはAIアシスタントです。"
 	}
 
-	// 2. ペルソナの読み込み (ディレクトリ構造に合わせて調整)
+	// ペルソナの読み込み
 	if charID == "" {
 		charID = "mocha"
 	}
-	charID = filepath.Clean(charID)
-	personaPath := fmt.Sprintf("./prompts/persona/%s.txt", charID)
+	if strings.Contains(charID, "..") {
+		return "invalid charID"
+	}
+	personaPath := filepath.Join("prompts", "persona", charID+".txt")
+
 	personaBytes, err := os.ReadFile(personaPath)
 	if err != nil {
 		log.Printf("WARNING: Persona file '%s' not found. Using default.", personaPath)
 		personaBytes, _ = os.ReadFile("./prompts/persona/mocha.txt")
 	}
 
-	// 3. 親密度レベルに応じた振る舞い定義の選択 [追加]
+	// 親密度レベルに応じた振る舞い定義の選択
 	levelFile := "lv1.txt"
 	if loveLevel >= 71 {
 		levelFile = "lv5.txt"
@@ -59,22 +62,25 @@ func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 	} else if loveLevel >= 11 {
 		levelFile = "lv2.txt"
 	}
-	levelBytes, err := os.ReadFile("./prompts/level/" + levelFile)
+
+	levelPath := filepath.Join("prompts", "level", charID, levelFile)
+	levelBytes, err := os.ReadFile(levelPath)
 	if err != nil {
 		log.Printf("ERROR: Level file %s read failed", levelFile)
 	}
 
-	// 4. 出力フォーマットの読み込み
+	// 出力フォーマットの読み込み
 	formatFile := "format_standard.txt"
 	if mode == "thought" || mode == "debug" {
 		formatFile = "format_thought.txt"
 	}
-	formatBytes, err := os.ReadFile("./prompts/" + formatFile)
+	formatPath := filepath.Join("prompts", formatFile)
+	formatBytes, err := os.ReadFile(formatPath)
 	if err != nil {
 		log.Printf("ERROR: Format file '%s' read failed", formatFile)
 	}
 
-	// 5. 結合 (数値としての {{current_love}} は渡さず、具体的な定義を埋め込む)
+	// 結合
 	fullPrompt := string(baseBytes) + "\n\n" +
 		"# 【キャラクター設定】\n" + string(personaBytes) + "\n\n" +
 		"# 【現在の関係性と振る舞いルール】\n" + string(levelBytes) + "\n\n" +

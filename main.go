@@ -10,7 +10,6 @@ import (
 
 // --- グローバル設定 ---
 
-// staticDir は配信するティラノスクリプトのプロジェクトディレクトリです。
 const staticDir = "../tyranoedu"
 
 var gradeSystemPrompt string
@@ -38,42 +37,39 @@ func main() {
 		log.Println("INFO: Supabase接続完了")
 	}
 
-	// loadSystemPrompt()
 	loadGradeSystemPrompt()
 	loadSummarySystemPrompt()
 
 	// --- ハンドラ（ルーティング）設定 ---
-	// APIルート（静的ファイルより先に登録）
+
+	// C++実行API (HTTP)
 	http.Handle("/api/execute", corsMiddleware(http.HandlerFunc(executeHandler)))
+
+	// AIチャットAPI:
+	//   /api/chat/ws  ... WebSocket版（mascot_chat/init.ks から使用）
+	//   /api/chat     ... HTTP版（後方互換のため残す）
+	http.HandleFunc("/api/chat/ws", chatWSHandler) // WebSocketはcorsMiddleware不要（CheckOriginで制御）
 	http.Handle("/api/chat", corsMiddleware(http.HandlerFunc(chatHandler)))
 
+	// 採点API (HTTP)
 	http.Handle("/api/grade", corsMiddleware(http.HandlerFunc(gradeHandler)))
 
-	// 統制群用
+	// 統制群用 (HTTP)
 	http.Handle("/api/advisor", corsMiddleware(http.HandlerFunc(advisorHandler)))
 
-	// 静的ファイル配信ルート（上記以外のすべてのリクエスト）
-	http.Handle("/", staticFileHandler())
-
-	// 記憶ハンドラ
+	// 記憶・要約API (HTTP)
 	http.Handle("/api/memory", corsMiddleware(http.HandlerFunc(getMemoryHandler)))
 	http.Handle("/api/summarize", corsMiddleware(http.HandlerFunc(summarizeHandler)))
 
+	// 静的ファイル配信（上記以外のすべてのリクエスト）
+	http.Handle("/", staticFileHandler())
+
 	// --- サーバー起動 ---
-	// myIP := os.Getenv("MY_IPV4_ADDRESS")
 	log.Println("Goサーバーが待機中:")
-	log.Println("  - http://localhost:8088 (ローカル)")
+	log.Println("  - http://localhost:8088  (HTTP)")
+	log.Println("  - ws://localhost:8088/api/chat/ws  (WebSocket)")
+	log.Println("(API: /api/execute, /api/chat, /api/chat/ws, /api/grade, /api/memory, /api/summarize)")
 
-	/*
-		if myIP != "" {
-			log.Printf("  - http://%s:8088 (ネットワーク)\n", myIP)
-		}
-	*/
-
-	log.Println("(API配信: /api/execute, /api/chat, /api/grade, /api/memory, /api/summarize)")
-	// log.Println("(静的ファイルの配信元: " + staticDir + ")")
-
-	// ListenAndServe はエラーを返すため、ログに出力する
 	if err := http.ListenAndServe(":8088", nil); err != nil {
 		log.Fatalf("サーバーの起動に失敗しました: %v", err)
 	}

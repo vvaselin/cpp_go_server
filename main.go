@@ -10,7 +10,7 @@ import (
 
 // --- グローバル設定 ---
 
-const staticDir = "../tyranoedu"
+const staticDir = "../TyranoEdu"
 
 var gradeSystemPrompt string
 
@@ -67,7 +67,6 @@ func main() {
 	// --- サーバー起動 ---
 	log.Println("Goサーバーが待機中:")
 	log.Println("  - http://localhost:8088  (HTTP)")
-	log.Println("  - ws://localhost:8088/api/chat/ws  (WebSocket)")
 	log.Println("(API: /api/execute, /api/chat, /api/chat/ws, /api/grade, /api/memory, /api/summarize)")
 
 	if err := http.ListenAndServe(":8088", nil); err != nil {

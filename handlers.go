@@ -142,7 +142,7 @@ func chatWSHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	log.Printf("INFO(WS): 新しいWebSocket接続: %s", r.RemoteAddr)
+	// log.Printf("INFO(WS): 新しいWebSocket接続: %s", r.RemoteAddr)
 
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {

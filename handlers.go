@@ -117,6 +117,7 @@ var wsUpgrader = websocket.Upgrader{
 		// corsMiddlewareと同じ許可リスト
 		allowedOrigins := []string{
 			"http://localhost:8088",
+			"https://lab.wasabi-apple.com",
 		}
 		for _, allowed := range allowedOrigins {
 			if origin == allowed {
@@ -450,6 +451,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		allowedOrigins := []string{
 			"http://localhost:8088",
+			"https://lab.wasabi-apple.com",
 		}
 		origin := r.Header.Get("Origin")
 		for _, allowedOrigin := range allowedOrigins {

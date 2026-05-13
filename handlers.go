@@ -31,7 +31,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	var payload CodePayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		log.Printf("ERROR(/api/execute): 不正なJSONを受信: %v", err)
-		http.Error(w, "Bad Request: Invalid JSON", http.StatusBadRequest)
+		sendErrorJSON(w, "不正なリクエストです")
 		return
 	}
 
@@ -39,7 +39,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	dir, err := os.MkdirTemp("", "cpp-execution-")
 	if err != nil {
 		log.Printf("ERROR: 一時ディレクトリの作成に失敗: %v", err)
-		http.Error(w, "Failed to create temp dir", http.StatusInternalServerError)
+		sendErrorJSON(w, "サーバー内部エラー: 一時ディレクトリ作成失敗")
 		return
 	}
 	defer os.RemoveAll(dir)
@@ -48,7 +48,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	// C++コードを一時ディレクトリに書き出す
 	if err := os.WriteFile(filepath.Join(dir, "main.cpp"), []byte(payload.Code), 0666); err != nil {
 		log.Printf("ERROR: main.cpp書き込みに失敗: %v", err)
-		http.Error(w, "Failed to write to temp file", http.StatusInternalServerError)
+		sendErrorJSON(w, "サーバー内部エラー: ファイル書き込み失敗")
 		return
 	}
 
@@ -62,12 +62,12 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	// ホストの一時ディレクトリをコンテナの /usr/src/app にマウントして実行
 	log.Printf("INFO: Dockerコンテナを実行...")
 	runCmd := exec.CommandContext(ctx, "docker", "run",
-		"--rm", // 実行後にコンテナを削除
+		"--rm",
 		"-i",
-		"--net=none",                              // ネットワークを無効化
-		"-v", fmt.Sprintf("%s:/usr/src/app", dir), // ボリュームマウント
-		"gcc:latest",                    // ベースイメージを直接指定
-		"sh", "-c", compileAndRunScript, // コンテナで実行するコマンド
+		"--net=none",
+		"-v", fmt.Sprintf("%s:/usr/src/app", dir),
+		"gcc:latest",
+		"sh", "-c", compileAndRunScript,
 	)
 
 	if payload.Stdin != "" {
@@ -83,14 +83,14 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	// タイムアウトの場合
 	if ctx.Err() == context.DeadlineExceeded {
 		log.Println("ERROR: Docker run timed out")
-		http.Error(w, "Execution timed out", http.StatusGatewayTimeout)
+		sendErrorJSON(w, "実行がタイムアウトしました（10秒超過）")
 		return
 	}
 
 	// その他の実行エラー（コンパイルエラーなど）
 	if err != nil {
 		log.Printf("ERROR: C++実行失敗: %v\n標準エラー: %s", err, stderr.String())
-		http.Error(w, "Execution failed: "+stderr.String(), http.StatusInternalServerError)
+		sendErrorJSON(w, stderr.String())
 		return
 	}
 
@@ -101,6 +101,13 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	enc.Encode(response)
+}
+
+// エラーでも200 + JSONで返すヘルパー関数
+func sendErrorJSON(w http.ResponseWriter, errMsg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(ResultPayload{Result: "エラー:\n" + errMsg})
 }
 
 //================================================================

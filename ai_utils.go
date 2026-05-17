@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -48,7 +49,11 @@ func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 	personaBytes, err := os.ReadFile(personaPath)
 	if err != nil {
 		log.Printf("WARNING: Persona file '%s' not found. Using default.", personaPath)
-		personaBytes, _ = os.ReadFile("./prompts/persona/mocha.txt")
+		personaBytes, err = os.ReadFile("./prompts/persona/mocha.txt")
+		if err != nil {
+			log.Printf("ERROR: Default persona (mocha.txt) も読み込めません: %v", err)
+			personaBytes = []byte("あなたは人見知りなプログラミング学習支援キャラクターです。丁寧に指導してください。")
+		}
 	}
 
 	// 親密度レベルに応じた振る舞い定義の選択
@@ -66,7 +71,14 @@ func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 	levelPath := filepath.Join("prompts", "level", charID, levelFile)
 	levelBytes, err := os.ReadFile(levelPath)
 	if err != nil {
-		log.Printf("ERROR: Level file %s read failed", levelFile)
+		log.Printf("WARNING: Level file '%s' read failed: %v. lv1.txt にフォールバック", levelFile, err)
+		// 指定レベルが読めない場合、最も制限的な lv1 を試す
+		fallbackPath := filepath.Join("prompts", "level", charID, "lv1.txt")
+		levelBytes, err = os.ReadFile(fallbackPath)
+		if err != nil {
+			log.Printf("ERROR: lv1.txt も読み込めません: %v. 最小限の定義を使用", err)
+			levelBytes = []byte("現在のレベル: Lv.1（初対面）。敬語で、必要最低限の会話のみ行ってください。心理的距離を保つこと。")
+		}
 	}
 
 	// 出力フォーマットの読み込み
@@ -77,7 +89,22 @@ func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 	formatPath := filepath.Join("prompts", formatFile)
 	formatBytes, err := os.ReadFile(formatPath)
 	if err != nil {
-		log.Printf("ERROR: Format file '%s' read failed", formatFile)
+		log.Printf("WARNING: Format file '%s' read failed: %v. format_standard.txt にフォールバック", formatFile, err)
+		// thought/debug 用が読めない場合、standard を試す
+		if formatFile != "format_standard.txt" {
+			formatBytes, err = os.ReadFile("./prompts/format_standard.txt")
+		}
+		if err != nil {
+			log.Printf("ERROR: format_standard.txt も読み込めません: %v. 最小限の定義を使用", err)
+			formatBytes = []byte(`JSON形式のみで出力してください。
+{
+  "thought": "思考プロセス",
+  "parameters": {"joy":0,"trust":0,"fear":0,"anger":0,"shy":0,"surprise":0},
+  "text": "回答テキスト",
+  "emotion": "normal",
+  "love_up": 0
+}`)
+		}
 	}
 
 	// 結合
@@ -194,4 +221,31 @@ func cleanJSONString(s string) string {
 	}
 
 	return strings.TrimSpace(s)
+}
+
+// テンプレート変数の正規表現（ {{variable_name}} 形式）
+var templateVarRegex = regexp.MustCompile(`\{\{(\w+)\}\}`)
+
+// validateTemplateVars は未解決のテンプレート変数をチェックし、
+// 見つかった場合はログに警告を出力します。
+// 戻り値: 未解決の変数名リスト（なければ空スライス）
+func validateTemplateVars(prompt string) []string {
+	matches := templateVarRegex.FindAllStringSubmatch(prompt, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	// 重複除去
+	seen := make(map[string]bool)
+	var unresolved []string
+	for _, m := range matches {
+		varName := m[1]
+		if !seen[varName] {
+			seen[varName] = true
+			unresolved = append(unresolved, varName)
+		}
+	}
+
+	log.Printf("WARNING: 未解決のテンプレート変数が %d 件あります: %v", len(unresolved), unresolved)
+	return unresolved
 }

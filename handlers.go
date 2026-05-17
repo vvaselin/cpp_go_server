@@ -250,6 +250,9 @@ func buildChatResponse(payload ChatPayload, apiKey string, history []OpenAIMessa
 	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{prev_params}}", string(prevParamsJSON))
 	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{prev_output}}", payload.PrevOutput)
 
+	// テンプレート変数の未解決チェック
+	validateTemplateVars(currentSystemPrompt)
+
 	// ユーザーコンテンツを構築
 	userContent := fmt.Sprintf(
 		"【現在の課題】\n%s\n\n【ユーザーのコード】\n%s\n\n【ユーザーのメッセージ】\n%s",
@@ -266,8 +269,9 @@ func buildChatResponse(payload ChatPayload, apiKey string, history []OpenAIMessa
 	reqMessages = append(reqMessages, OpenAIMessage{Role: "user", Content: userContent})
 
 	reqBody := OpenAIRequest{
-		Model:    "gpt-4o-mini",
-		Messages: reqMessages,
+		Model:          "gpt-4o-mini",
+		Messages:       reqMessages,
+		ResponseFormat: &ResponseFormat{Type: "json_object"},
 	}
 
 	reqBytes, err := json.Marshal(reqBody)

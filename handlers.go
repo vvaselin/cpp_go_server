@@ -160,6 +160,10 @@ func chatWSHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// このWebSocket接続の会話履歴（コネクション単位で保持）
+	var chatHistory []OpenAIMessage
+	const maxHistoryLen = 20 // 最大保持数（10往復分）
+
 	for {
 		// クライアントからメッセージを受信
 		_, msgBytes, err := conn.ReadMessage()
@@ -182,12 +186,29 @@ func chatWSHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// AIレスポンスを生成してクライアントに送り返す
-		chatRes, err := buildChatResponse(payload, apiKey)
+		chatRes, err := buildChatResponse(payload, apiKey, chatHistory)
 		if err != nil {
 			log.Printf("ERROR(WS): AIレスポンス生成失敗: %v", err)
 			errResp := ChatResponse{Text: "AIとの通信に失敗しました。", Emotion: "sad"}
 			conn.WriteJSON(errResp)
 			continue
+		}
+
+		// 会話履歴に今回のやり取りを追加
+		// ユーザー側: メッセージ本文のみ（課題・コードは毎回systemで渡すため省略）
+		chatHistory = append(chatHistory, OpenAIMessage{
+			Role:    "user",
+			Content: payload.Message,
+		})
+		// アシスタント側: キャラのセリフのみ（JSON全体ではなく対話テキスト）
+		chatHistory = append(chatHistory, OpenAIMessage{
+			Role:    "assistant",
+			Content: chatRes.Text,
+		})
+
+		// 履歴が上限を超えたら古い方から削除（2件ずつ＝1往復単位）
+		if len(chatHistory) > maxHistoryLen {
+			chatHistory = chatHistory[len(chatHistory)-maxHistoryLen:]
 		}
 
 		// レスポンスをJSON送信
@@ -200,7 +221,7 @@ func chatWSHandler(w http.ResponseWriter, r *http.Request) {
 
 // buildChatResponse: ChatPayloadからAIレスポンスを構築する共通ロジック
 // chatWSHandlerから呼び出される（旧chatHandlerのロジックを切り出したもの）
-func buildChatResponse(payload ChatPayload, apiKey string) (ChatResponse, error) {
+func buildChatResponse(payload ChatPayload, apiKey string, history []OpenAIMessage) (ChatResponse, error) {
 	// Supabaseからユーザーメモリを取得
 	var userMem UserProfile
 	if payload.UserID != "" && supabaseClient != nil {
@@ -237,10 +258,12 @@ func buildChatResponse(payload ChatPayload, apiKey string) (ChatResponse, error)
 		payload.Message,
 	)
 
+	// メッセージ配列を構築: system → 過去の会話履歴 → 今回のユーザー入力
 	reqMessages := []OpenAIMessage{
 		{Role: "system", Content: currentSystemPrompt},
-		{Role: "user", Content: userContent},
 	}
+	reqMessages = append(reqMessages, history...)
+	reqMessages = append(reqMessages, OpenAIMessage{Role: "user", Content: userContent})
 
 	reqBody := OpenAIRequest{
 		Model:    "gpt-4o-mini",
@@ -329,7 +352,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatRes, err := buildChatResponse(payload, apiKey)
+	chatRes, err := buildChatResponse(payload, apiKey, nil)
 	if err != nil {
 		log.Printf("ERROR(/api/chat): %v", err)
 		http.Error(w, "Failed to communicate with AI", http.StatusBadGateway)

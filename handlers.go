@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -136,12 +137,14 @@ var wsUpgrader = websocket.Upgrader{
 	},
 }
 
-// chatWSHandler: /api/chat/ws へのWebSocket接続を処理する
+// chatWSHandler: /api/chat/ws へのWebSocket接続を処理する (ストリーミング対応版)
 //
 // 接続フロー:
 //  1. クライアントがWSを開く (一度だけ)
 //  2. クライアントがChatPayload JSONをテキストフレームで送信
-//  3. サーバーがOpenAIを呼び出し、ChatResponse JSONをテキストフレームで返す
+//  3. サーバーがOpenAIをストリーミングで呼び出し:
+//     - テキストが生成されるたびに {type:"chunk", delta:"..."} を送信
+//     - 完了時に {type:"done", text:"...", emotion:"...", ...} を送信
 //  4. 2〜3を繰り返す（接続は維持）
 func chatWSHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -150,7 +153,6 @@ func chatWSHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	// log.Printf("INFO(WS): 新しいWebSocket接続: %s", r.RemoteAddr)
 
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
@@ -180,41 +182,33 @@ func chatWSHandler(w http.ResponseWriter, r *http.Request) {
 		var payload ChatPayload
 		if err := json.Unmarshal(msgBytes, &payload); err != nil {
 			log.Printf("ERROR(WS): 不正なJSONを受信: %v", err)
-			errResp := ChatResponse{Text: "リクエストの解析に失敗しました。", Emotion: "sad"}
-			conn.WriteJSON(errResp)
+			errMsg := WSStreamMessage{Type: "done", Text: "リクエストの解析に失敗しました。", Emotion: "sad"}
+			conn.WriteJSON(errMsg)
 			continue
 		}
 
-		// AIレスポンスを生成してクライアントに送り返す
-		chatRes, err := buildChatResponse(payload, apiKey, chatHistory)
+		// ストリーミングでAIレスポンスを生成
+		chatRes, err := buildChatResponseStream(payload, apiKey, chatHistory, conn)
 		if err != nil {
 			log.Printf("ERROR(WS): AIレスポンス生成失敗: %v", err)
-			errResp := ChatResponse{Text: "AIとの通信に失敗しました。", Emotion: "sad"}
-			conn.WriteJSON(errResp)
+			errMsg := WSStreamMessage{Type: "done", Text: "AIとの通信に失敗しました。", Emotion: "sad"}
+			conn.WriteJSON(errMsg)
 			continue
 		}
 
 		// 会話履歴に今回のやり取りを追加
-		// ユーザー側: メッセージ本文のみ（課題・コードは毎回systemで渡すため省略）
 		chatHistory = append(chatHistory, OpenAIMessage{
 			Role:    "user",
 			Content: payload.Message,
 		})
-		// アシスタント側: キャラのセリフのみ（JSON全体ではなく対話テキスト）
 		chatHistory = append(chatHistory, OpenAIMessage{
 			Role:    "assistant",
 			Content: chatRes.Text,
 		})
 
-		// 履歴が上限を超えたら古い方から削除（2件ずつ＝1往復単位）
+		// 履歴が上限を超えたら古い方から削除
 		if len(chatHistory) > maxHistoryLen {
 			chatHistory = chatHistory[len(chatHistory)-maxHistoryLen:]
-		}
-
-		// レスポンスをJSON送信
-		if err := conn.WriteJSON(chatRes); err != nil {
-			log.Printf("ERROR(WS): レスポンス送信失敗: %v", err)
-			break
 		}
 	}
 }
@@ -333,6 +327,261 @@ func buildChatResponse(payload ChatPayload, apiKey string, history []OpenAIMessa
 	}
 
 	return chatRes, nil
+}
+
+// buildChatResponseStream: OpenAI Streaming APIを使い、テキストを逐次WebSocket送信する
+// チャンク送信中は {type:"chunk", delta:"..."} を送り、
+// 完了時に {type:"done", ...fullResponse} を送る
+func buildChatResponseStream(payload ChatPayload, apiKey string, history []OpenAIMessage, conn *websocket.Conn) (ChatResponse, error) {
+	// --- システムプロンプト構築 (buildChatResponseと同じ) ---
+	var userMem UserProfile
+	if payload.UserID != "" && supabaseClient != nil {
+		var profiles []UserProfile
+		supabaseClient.DB.From("profiles").Select("*").Eq("id", payload.UserID).Execute(&profiles)
+		if len(profiles) > 0 {
+			userMem = profiles[0]
+		}
+	}
+
+	memoryText := "まだ情報がありません。"
+	if userMem.Summary != "" {
+		memoryText = userMem.Summary
+	}
+	weaknessText := "特になし"
+	if len(userMem.Weaknesses) > 0 {
+		weaknessText = strings.Join(userMem.Weaknesses, ", ")
+	}
+
+	currentSystemPrompt := buildSystemPrompt(payload.CharacterID, "thought", payload.LoveLevel)
+	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{user_memory}}", memoryText)
+	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{user_weaknesses}}", weaknessText)
+
+	prevParamsJSON, _ := json.Marshal(payload.PrevParams)
+	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{prev_params}}", string(prevParamsJSON))
+	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{prev_output}}", payload.PrevOutput)
+	validateTemplateVars(currentSystemPrompt)
+
+	userContent := fmt.Sprintf(
+		"【現在の課題】\n%s\n\n【ユーザーのコード】\n%s\n\n【ユーザーのメッセージ】\n%s",
+		payload.Task,
+		payload.Code,
+		payload.Message,
+	)
+
+	reqMessages := []OpenAIMessage{
+		{Role: "system", Content: currentSystemPrompt},
+	}
+	reqMessages = append(reqMessages, history...)
+	reqMessages = append(reqMessages, OpenAIMessage{Role: "user", Content: userContent})
+
+	// --- ストリーミングリクエスト送信 ---
+	reqBody := OpenAIStreamRequest{
+		Model:          "gpt-4o-mini",
+		Messages:       reqMessages,
+		ResponseFormat: &ResponseFormat{Type: "json_object"},
+		Stream:         true,
+	}
+
+	reqBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return ChatResponse{}, fmt.Errorf("OpenAIリクエストのMarshal失敗: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(reqBytes))
+	if err != nil {
+		return ChatResponse{}, fmt.Errorf("OpenAIリクエスト作成失敗: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ChatResponse{}, fmt.Errorf("OpenAIへの送信失敗: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return ChatResponse{}, fmt.Errorf("OpenAI APIエラー: %d %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// --- SSEストリームの読み取りとチャンク送信 ---
+	var accumulated strings.Builder
+	var lastSentTextLen int
+
+	scanner := bufio.NewScanner(resp.Body)
+	// SSEラインの最大サイズを拡大
+	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// SSE形式: "data: {...}" のみ処理
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+
+		// ストリーム終了マーカー
+		if data == "[DONE]" {
+			break
+		}
+
+		// チャンクをパース
+		var chunk OpenAIStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue // パース失敗は無視
+		}
+
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+
+		content := chunk.Choices[0].Delta.Content
+		if content == "" {
+			continue
+		}
+
+		accumulated.WriteString(content)
+
+		// 蓄積されたJSONから "text" フィールドの値を部分的に抽出
+		currentText := extractPartialTextField(accumulated.String())
+		if len(currentText) > lastSentTextLen {
+			// 新しい差分のみ送信
+			delta := currentText[lastSentTextLen:]
+			lastSentTextLen = len(currentText)
+
+			chunkMsg := WSStreamMessage{
+				Type:  "chunk",
+				Delta: delta,
+			}
+			if err := conn.WriteJSON(chunkMsg); err != nil {
+				log.Printf("ERROR(WS): チャンク送信失敗: %v", err)
+				return ChatResponse{}, fmt.Errorf("WebSocketチャンク送信失敗: %w", err)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return ChatResponse{}, fmt.Errorf("SSEストリーム読み取りエラー: %w", err)
+	}
+
+	// --- 完了: フルJSONをパースしてメタデータ込みで送信 ---
+	aiRawContent := accumulated.String()
+	aiCleanContent := cleanJSONString(aiRawContent)
+
+	var chatRes ChatResponse
+	if err := json.Unmarshal([]byte(aiCleanContent), &chatRes); err != nil {
+		log.Printf("WARNING: ストリーミング応答のJSONパース失敗。Raw: %s", aiCleanContent)
+		chatRes = ChatResponse{
+			Text:    aiCleanContent,
+			Emotion: "normal",
+			LoveUp:  0,
+		}
+	}
+
+	if os.Getenv("AI_DEBUG_MODE") == "true" && chatRes.Thought != "" {
+		log.Printf("Thought: %s", chatRes.Thought)
+		log.Printf("Params: %+v", chatRes.Parameters)
+		log.Printf("LoveValue: %d", chatRes.LoveUp)
+	}
+
+	// done メッセージを送信
+	doneMsg := WSStreamMessage{
+		Type:       "done",
+		Text:       chatRes.Text,
+		Emotion:    chatRes.Emotion,
+		LoveUp:     chatRes.LoveUp,
+		Thought:    chatRes.Thought,
+		Parameters: chatRes.Parameters,
+	}
+	if err := conn.WriteJSON(doneMsg); err != nil {
+		log.Printf("ERROR(WS): done送信失敗: %v", err)
+		return chatRes, fmt.Errorf("WebSocket done送信失敗: %w", err)
+	}
+
+	return chatRes, nil
+}
+
+// extractPartialTextField は蓄積中のJSON文字列から "text" フィールドの値を
+// 部分的に抽出する。JSONがまだ不完全でも、"text" キーの値が始まっていれば
+// そこまでの内容を返す。
+func extractPartialTextField(partial string) string {
+	// "text" キーの位置を探す
+	// パターン: "text": " または "text":"
+	searchPatterns := []string{`"text": "`, `"text":"`}
+
+	textStart := -1
+	patternLen := 0
+	for _, pat := range searchPatterns {
+		// 末尾から逆順に探し、エスケープされていないものを見つける
+		searchEnd := len(partial)
+		for {
+			idx := strings.LastIndex(partial[:searchEnd], pat)
+			if idx == -1 {
+				break
+			}
+			// idx の直前が \ ならエスケープ内部なのでスキップ
+			if idx > 0 && partial[idx-1] == '\\' {
+				searchEnd = idx
+				continue
+			}
+			if idx > textStart {
+				textStart = idx
+				patternLen = len(pat)
+			}
+			break
+		}
+	}
+
+	if textStart == -1 {
+		return ""
+	}
+
+	// "text": " の直後から値を読み取る
+	valueStart := textStart + patternLen
+	if valueStart >= len(partial) {
+		return ""
+	}
+
+	// JSON文字列の値をデコード（エスケープ対応）
+	var result strings.Builder
+	i := valueStart
+	for i < len(partial) {
+		ch := partial[i]
+		if ch == '\\' && i+1 < len(partial) {
+			// エスケープシーケンス
+			next := partial[i+1]
+			switch next {
+			case '"':
+				result.WriteByte('"')
+			case '\\':
+				result.WriteByte('\\')
+			case 'n':
+				result.WriteByte('\n')
+			case 'r':
+				result.WriteByte('\r')
+			case 't':
+				result.WriteByte('\t')
+			default:
+				result.WriteByte('\\')
+				result.WriteByte(next)
+			}
+			i += 2
+		} else if ch == '"' {
+			// 閉じクォート = テキスト値の終端
+			break
+		} else {
+			result.WriteByte(ch)
+			i++
+		}
+	}
+
+	return result.String()
 }
 
 // --- AIチャットハンドラ (HTTP版 / 後方互換のため残す) ---

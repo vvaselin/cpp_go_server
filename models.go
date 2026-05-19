@@ -167,3 +167,35 @@ type Choice struct {
 	Label string `json:"label"` // ボタンの表示名
 	Value string `json:"value"` // 送信する値
 }
+
+// --- ストリーミング用 ---
+
+// WebSocketで送るストリーミングチャンクメッセージ
+type WSStreamMessage struct {
+	Type  string `json:"type"`            // "chunk" or "done"
+	Delta string `json:"delta,omitempty"` // chunkの場合: 差分テキスト
+	// doneの場合: 完全なChatResponseのフィールドを展開
+	Text       string      `json:"text,omitempty"`
+	Emotion    string      `json:"emotion,omitempty"`
+	LoveUp     int         `json:"love_up,omitempty"`
+	Thought    string      `json:"thought,omitempty"`
+	Parameters interface{} `json:"parameters,omitempty"`
+}
+
+// OpenAI Streaming用レスポンス構造体
+type OpenAIStreamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	} `json:"choices"`
+}
+
+// ストリーミング対応の OpenAI リクエストボディ
+type OpenAIStreamRequest struct {
+	Model          string          `json:"model"`
+	Messages       []OpenAIMessage `json:"messages"`
+	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
+	Stream         bool            `json:"stream"`
+}

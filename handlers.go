@@ -274,8 +274,13 @@ func buildChatResponse(payload ChatPayload, apiKey string, history []OpenAIMessa
 	reqMessages = append(reqMessages, history...)
 	reqMessages = append(reqMessages, OpenAIMessage{Role: "user", Content: userContent})
 
+	model := os.Getenv("OPENAI_MODEL")
+	if model == "" {
+		model = "gpt-4o-mini" // デフォルト
+	}
+
 	reqBody := OpenAIRequest{
-		Model:          "gpt-4o-mini",
+		Model:          model,
 		Messages:       reqMessages,
 		ResponseFormat: &ResponseFormat{Type: "json_object"},
 	}
@@ -386,9 +391,14 @@ func buildChatResponseStream(payload ChatPayload, apiKey string, history []OpenA
 	reqMessages = append(reqMessages, history...)
 	reqMessages = append(reqMessages, OpenAIMessage{Role: "user", Content: userContent})
 
+	model := os.Getenv("OPENAI_MODEL")
+	if model == "" {
+		model = "gpt-4o-mini" // デフォルト
+	}
+
 	// --- ストリーミングリクエスト送信 ---
 	reqBody := OpenAIStreamRequest{
-		Model:          "gpt-4o-mini",
+		Model:          model,
 		Messages:       reqMessages,
 		ResponseFormat: &ResponseFormat{Type: "json_object"},
 		Stream:         true,
@@ -500,6 +510,12 @@ func buildChatResponseStream(payload ChatPayload, apiKey string, history []OpenA
 		log.Printf("Thought: %s", chatRes.Thought)
 		log.Printf("Params: %+v", chatRes.Parameters)
 		log.Printf("LoveValue: %d", chatRes.LoveUp)
+	}
+
+	// テキストが空の場合はフォールバック（gpt-4oで稀に発生）
+	if strings.TrimSpace(chatRes.Text) == "" {
+		log.Printf("WARNING: AIレスポンスのtextフィールドが空です。Raw: %s", aiCleanContent)
+		chatRes.Text = "（ごめん、うまく言葉にできなかった…もう一度聞いてくれる？）"
 	}
 
 	// done メッセージを送信

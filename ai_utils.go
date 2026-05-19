@@ -156,8 +156,13 @@ func callOpenAI(sysPrompt, userMsg string, useJSON bool) (string, error) {
 		{Role: "user", Content: userMsg},
 	}
 
+	model := os.Getenv("OPENAI_MODEL")
+	if model == "" {
+		model = "gpt-4o-mini" // デフォルト
+	}
+
 	reqBody := OpenAIRequest{
-		Model:    "gpt-4o-mini",
+		Model:    model,
 		Messages: reqMessages,
 	}
 

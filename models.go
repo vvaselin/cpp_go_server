@@ -175,7 +175,7 @@ type WSStreamMessage struct {
 	Type  string `json:"type"`            // "chunk" or "done"
 	Delta string `json:"delta,omitempty"` // chunkの場合: 差分テキスト
 	// doneの場合: 完全なChatResponseのフィールドを展開
-	Text       string      `json:"text,omitempty"`
+	Text       string      `json:"text"`
 	Emotion    string      `json:"emotion,omitempty"`
 	LoveUp     int         `json:"love_up,omitempty"`
 	Thought    string      `json:"thought,omitempty"`

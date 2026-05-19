@@ -188,7 +188,19 @@ func chatWSHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// ストリーミングでAIレスポンスを生成
-		chatRes, err := buildChatResponseStream(payload, apiKey, chatHistory, conn)
+		// ※ 切り替え: useStreaming を false にすると従来の一括レスポンスになる
+		useStreaming := true
+
+		var chatRes ChatResponse
+		if useStreaming {
+			chatRes, err = buildChatResponseStream(payload, apiKey, chatHistory, conn)
+		} else {
+			chatRes, err = buildChatResponse(payload, apiKey, chatHistory)
+			if err == nil {
+				// 非ストリーミング時は自分でWSに送信する
+				conn.WriteJSON(chatRes)
+			}
+		}
 		if err != nil {
 			log.Printf("ERROR(WS): AIレスポンス生成失敗: %v", err)
 			errMsg := WSStreamMessage{Type: "done", Text: "AIとの通信に失敗しました。", Emotion: "sad"}
@@ -352,7 +364,7 @@ func buildChatResponseStream(payload ChatPayload, apiKey string, history []OpenA
 		weaknessText = strings.Join(userMem.Weaknesses, ", ")
 	}
 
-	currentSystemPrompt := buildSystemPrompt(payload.CharacterID, "thought", payload.LoveLevel)
+	currentSystemPrompt := buildSystemPrompt(payload.CharacterID, "stream", payload.LoveLevel)
 	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{user_memory}}", memoryText)
 	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{user_weaknesses}}", weaknessText)
 

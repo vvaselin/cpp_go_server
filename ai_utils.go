@@ -85,6 +85,8 @@ func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 	formatFile := "format_standard.txt"
 	if mode == "thought" || mode == "debug" {
 		formatFile = "format_thought.txt"
+	} else if mode == "stream" {
+		formatFile = "format_stream.txt"
 	}
 	formatPath := filepath.Join("prompts", formatFile)
 	formatBytes, err := os.ReadFile(formatPath)

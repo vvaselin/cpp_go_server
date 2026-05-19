@@ -44,7 +44,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer os.RemoveAll(dir)
-	log.Printf("INFO:: 一時ディレクトリを作成: %s", dir)
+	// log.Printf("INFO:: 一時ディレクトリを作成: %s", dir)
 
 	// C++コードを一時ディレクトリに書き出す
 	if err := os.WriteFile(filepath.Join(dir, "main.cpp"), []byte(payload.Code), 0666); err != nil {

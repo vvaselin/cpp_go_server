@@ -208,7 +208,7 @@ func chatWSHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		log.Printf("[Stream] params=%+v", chatRes.Parameters)
+		log.Printf("[Stream] params=%+v emo=%s", chatRes.Parameters, chatRes.Emotion)
 
 		// 会話履歴に今回のやり取りを追加
 		chatHistory = append(chatHistory, OpenAIMessage{

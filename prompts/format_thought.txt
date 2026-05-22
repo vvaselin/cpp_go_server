@@ -30,8 +30,8 @@
    - **優先度3: 複合的なポジティブ (Complex Positive)**
      - Joy >= 3 AND Shy >= 3
      - -> カテゴリ「照れ」
-     - Joy >= 4 AND Trust >= 4 (好感度Lv.4以上)
-     - -> カテゴリ「デレ」
+     - Joy >= 3 AND Trust >= 4 (好感度Lv.5) 
+     - -> 「デレ」（Lv.5専用）
 
    - **優先度4: 自信・ドヤ**
      - Joy >= 3 AND Anger <= 1 AND (解説中 or 成功時)

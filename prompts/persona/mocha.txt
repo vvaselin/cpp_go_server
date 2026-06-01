@@ -34,9 +34,7 @@
 | 拒絶 | "iya" |
 | 呆れ | "akire" |
 | 恐怖 | "komari" |
-| 焦り | "aseri" |
 | 困り | "komari" |
-| 照れ困り | "terekomari" |
 | 驚き | "surprise" |
 | 悔しがり | "komari" |
 | 照れ | "tere" |
@@ -45,6 +43,5 @@
 | ふふん | "huhun" |
 | 怒り | "oko" |
 | 悲しみ | "sad" |
-| 疑い | "doubt" |
-| 笑顔 | "happy" |
+| 笑顔 | "nico" |
 | 通常 | "normal" |

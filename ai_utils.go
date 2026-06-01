@@ -58,13 +58,13 @@ func buildSystemPrompt(charID string, mode string, loveLevel int) string {
 
 	// 親密度レベルに応じた振る舞い定義の選択
 	levelFile := "lv1.txt"
-	if loveLevel >= 71 {
+	if loveLevel >= 100 {
 		levelFile = "lv5.txt"
-	} else if loveLevel >= 41 {
+	} else if loveLevel >= 65 {
 		levelFile = "lv4.txt"
-	} else if loveLevel >= 26 {
+	} else if loveLevel >= 30 {
 		levelFile = "lv3.txt"
-	} else if loveLevel >= 11 {
+	} else if loveLevel >= 15 {
 		levelFile = "lv2.txt"
 	}
 

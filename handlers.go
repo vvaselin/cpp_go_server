@@ -229,17 +229,28 @@ func chatWSHandler(w http.ResponseWriter, r *http.Request) {
 
 // buildChatResponse: ChatPayloadからAIレスポンスを構築する共通ロジック
 // chatWSHandlerから呼び出される（旧chatHandlerのロジックを切り出したもの）
-func buildChatResponse(payload ChatPayload, apiKey string, history []OpenAIMessage) (ChatResponse, error) {
-	// Supabaseからユーザーメモリを取得
+func fetchUserProfile(userID string) UserProfile {
 	var userMem UserProfile
-	if payload.UserID != "" && supabaseClient != nil {
-		var profiles []UserProfile
-		supabaseClient.DB.From("profiles").Select("*").Eq("id", payload.UserID).Execute(&profiles)
-		if len(profiles) > 0 {
-			userMem = profiles[0]
-		}
+	if userID == "" || supabaseClient == nil {
+		return userMem
 	}
 
+	var profiles []UserProfile
+	if err := supabaseClient.DB.From("profiles").Select("*").Eq("id", userID).Execute(&profiles); err != nil {
+		log.Printf("WARNING: Supabase profile fetch failed: %v", err)
+		return userMem
+	}
+	if len(profiles) > 0 {
+		userMem = profiles[0]
+	}
+	return userMem
+}
+
+func profilePromptValues(userMem UserProfile) (string, string, string) {
+	userName := strings.TrimSpace(userMem.Name)
+	if userName == "" {
+		userName = "あなた"
+	}
 	memoryText := "まだ情報がありません。"
 	if userMem.Summary != "" {
 		memoryText = userMem.Summary
@@ -248,9 +259,17 @@ func buildChatResponse(payload ChatPayload, apiKey string, history []OpenAIMessa
 	if len(userMem.Weaknesses) > 0 {
 		weaknessText = strings.Join(userMem.Weaknesses, ", ")
 	}
+	return userName, memoryText, weaknessText
+}
+
+func buildChatResponse(payload ChatPayload, apiKey string, history []OpenAIMessage) (ChatResponse, error) {
+	// Supabaseからユーザープロフィールを取得
+	userMem := fetchUserProfile(payload.UserID)
+	userName, memoryText, weaknessText := profilePromptValues(userMem)
 
 	// システムプロンプトを構築
 	currentSystemPrompt := buildSystemPrompt(payload.CharacterID, "thought", payload.LoveLevel)
+	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{user_name}}", userName)
 	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{user_memory}}", memoryText)
 	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{user_weaknesses}}", weaknessText)
 
@@ -353,25 +372,11 @@ func buildChatResponse(payload ChatPayload, apiKey string, history []OpenAIMessa
 // 完了時に {type:"done", ...fullResponse} を送る
 func buildChatResponseStream(payload ChatPayload, apiKey string, history []OpenAIMessage, conn *websocket.Conn) (ChatResponse, error) {
 	// --- システムプロンプト構築 (buildChatResponseと同じ) ---
-	var userMem UserProfile
-	if payload.UserID != "" && supabaseClient != nil {
-		var profiles []UserProfile
-		supabaseClient.DB.From("profiles").Select("*").Eq("id", payload.UserID).Execute(&profiles)
-		if len(profiles) > 0 {
-			userMem = profiles[0]
-		}
-	}
-
-	memoryText := "まだ情報がありません。"
-	if userMem.Summary != "" {
-		memoryText = userMem.Summary
-	}
-	weaknessText := "特になし"
-	if len(userMem.Weaknesses) > 0 {
-		weaknessText = strings.Join(userMem.Weaknesses, ", ")
-	}
+	userMem := fetchUserProfile(payload.UserID)
+	userName, memoryText, weaknessText := profilePromptValues(userMem)
 
 	currentSystemPrompt := buildSystemPrompt(payload.CharacterID, "stream", payload.LoveLevel)
+	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{user_name}}", userName)
 	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{user_memory}}", memoryText)
 	currentSystemPrompt = strings.ReplaceAll(currentSystemPrompt, "{{user_weaknesses}}", weaknessText)
 

@@ -85,5 +85,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 func sendErrorJSON(w http.ResponseWriter, errMsg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(ResultPayload{Result: "繧ｨ繝ｩ繝ｼ:\n" + errMsg})
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.Encode(ResultPayload{Result: "エラー:\n" + errMsg})
 }

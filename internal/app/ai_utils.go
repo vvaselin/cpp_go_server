@@ -28,7 +28,7 @@ func loadEnv() {
 	if ok {
 		rootEnv := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".env"))
 		if err := godotenv.Load(rootEnv); err == nil {
-			//log.Printf("INFO: loaded env file: %s", rootEnv)
+			log.Printf("INFO: loaded env file: %s", rootEnv)
 			return
 		} else {
 			log.Printf("WARNING: failed to load go_server .env at %s: %v", rootEnv, err)

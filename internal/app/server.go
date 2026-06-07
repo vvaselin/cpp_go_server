@@ -28,10 +28,10 @@ func Run() {
 
 	supabaseURL := cleanEnvValue(os.Getenv("SUPABASE_URL"))
 	supabaseKey := cleanEnvValue(os.Getenv("SUPABASE_KEY"))
-	//log.Printf("INFO: SUPABASE_URL configured: %t", supabaseURL != "")
-	//log.Printf("INFO: SUPABASE_KEY configured: %t", supabaseKey != "")
+	log.Printf("INFO: SUPABASE_URL configured: %t", supabaseURL != "")
+	log.Printf("INFO: SUPABASE_KEY configured: %t", supabaseKey != "")
 	if supabaseKey != "" {
-		//log.Printf("INFO: Supabase key type: %s", supabaseKeyType(supabaseKey))
+		log.Printf("INFO: Supabase key type: %s", supabaseKeyType(supabaseKey))
 	}
 	if supabaseURL == "" || supabaseKey == "" {
 		log.Println("WARNING: SUPABASE_URL or SUPABASE_KEY is not configured. DB features are disabled.")
@@ -65,6 +65,13 @@ func Run() {
 }
 
 func supabaseKeyType(key string) string {
+	if strings.HasPrefix(key, "sb_secret_") {
+		return "secret"
+	}
+	if strings.HasPrefix(key, "sb_publishable_") {
+		return "publishable"
+	}
+
 	parts := strings.Split(key, ".")
 	if len(parts) < 2 {
 		return "unknown_non_jwt"
@@ -81,7 +88,14 @@ func supabaseKeyType(key string) string {
 	}
 
 	if role, ok := claims["role"].(string); ok && role != "" {
-		return role
+		switch role {
+		case "service_role":
+			return "legacy service_role"
+		case "anon":
+			return "legacy anon"
+		default:
+			return "legacy " + role
+		}
 	}
 	if ref, ok := claims["ref"].(string); ok && ref != "" {
 		return "secret_key_ref_" + ref

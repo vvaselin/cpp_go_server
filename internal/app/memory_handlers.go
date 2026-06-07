@@ -8,7 +8,14 @@ import (
 	"time"
 )
 
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
 func getMemoryHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
 		json.NewEncoder(w).Encode(UserProfile{
@@ -18,11 +25,17 @@ func getMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if supabaseClient == nil {
+		log.Println("ERROR: Supabase client is not initialized")
+		writeJSONError(w, http.StatusInternalServerError, "Database is not configured")
+		return
+	}
+
 	var profiles []UserProfile
 	err := supabaseClient.DB.From("profiles").Select("*").Eq("id", userID).Execute(&profiles)
 	if err != nil {
 		log.Printf("ERROR: Fetch profile failed: %v", err)
-		http.Error(w, "Database error", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
 
@@ -35,7 +48,11 @@ func getMemoryHandler(w http.ResponseWriter, r *http.Request) {
 			Weaknesses:    []string{},
 			LastUpdated:   time.Now().Format("2006-01-02 15:04:05"),
 		}
-		supabaseClient.DB.From("profiles").Insert(newProfile).Execute(nil)
+		if err := supabaseClient.DB.From("profiles").Insert(newProfile).Execute(nil); err != nil {
+			log.Printf("ERROR: Insert profile failed: user_id=%s err=%v", userID, err)
+			writeJSONError(w, http.StatusInternalServerError, "Database error")
+			return
+		}
 		json.NewEncoder(w).Encode(newProfile)
 	} else {
 		enc := json.NewEncoder(w)
@@ -46,23 +63,33 @@ func getMemoryHandler(w http.ResponseWriter, r *http.Request) {
 
 func summarizeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	var req SummarizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if req.UserID == "" {
-		http.Error(w, "UserID is required", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "UserID is required")
+		return
+	}
+
+	if supabaseClient == nil {
+		log.Println("ERROR: Supabase client is not initialized")
+		writeJSONError(w, http.StatusInternalServerError, "Database is not configured")
 		return
 	}
 
 	var profiles []UserProfile
-	supabaseClient.DB.From("profiles").Select("*").Eq("id", req.UserID).Execute(&profiles)
+	if err := supabaseClient.DB.From("profiles").Select("*").Eq("id", req.UserID).Execute(&profiles); err != nil {
+		log.Printf("ERROR: Fetch profile before summarize failed: user_id=%s err=%v", req.UserID, err)
+		writeJSONError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
 
 	var currentMem UserProfile
 	if len(profiles) > 0 {
@@ -85,14 +112,14 @@ func summarizeHandler(w http.ResponseWriter, r *http.Request) {
 
 	newJSONStr, err := callOpenAI(summarySystemPrompt, userPrompt, true)
 	if err != nil {
-		http.Error(w, "AI Error", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "AI Error")
 		return
 	}
 
 	newJSONStr = cleanJSONString(newJSONStr)
 	var newProfileData UserProfile
 	if err := json.Unmarshal([]byte(newJSONStr), &newProfileData); err != nil {
-		http.Error(w, "AI parse error", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "AI parse error")
 		return
 	}
 
@@ -108,8 +135,8 @@ func summarizeHandler(w http.ResponseWriter, r *http.Request) {
 
 	err = supabaseClient.DB.From("profiles").Update(updateData).Eq("id", req.UserID).Execute(nil)
 	if err != nil {
-		log.Printf("ERROR: Save profile failed: %v", err)
-		http.Error(w, "Failed to save to DB", http.StatusInternalServerError)
+		log.Printf("ERROR: Save profile failed: user_id=%s update=%+v err=%v", req.UserID, updateData, err)
+		writeJSONError(w, http.StatusInternalServerError, "Failed to save to DB")
 		return
 	}
 

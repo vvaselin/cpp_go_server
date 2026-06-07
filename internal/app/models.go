@@ -133,6 +133,7 @@ type UserProfile struct {
 	LastUpdated   string   `json:"last_updated"`
 	Role          string   `json:"role"`
 	Name          string   `json:"name"`
+	ParticipantID string   `json:"participant_id"`
 }
 
 // 会話履歴の要素

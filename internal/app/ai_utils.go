@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -23,9 +24,21 @@ import (
 
 // loadEnv は .env ファイルから環境変数を読み込み
 func loadEnv() {
-	err := godotenv.Load() // .env ファイルを探す
-	if err != nil {
-		log.Println("警告: .env ファイルの読み込みに失敗しました。")
+	_, file, _, ok := runtime.Caller(0)
+	if ok {
+		rootEnv := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".env"))
+		if err := godotenv.Load(rootEnv); err == nil {
+			//log.Printf("INFO: loaded env file: %s", rootEnv)
+			return
+		} else {
+			log.Printf("WARNING: failed to load go_server .env at %s: %v", rootEnv, err)
+		}
+	}
+
+	if err := godotenv.Load(); err != nil {
+		log.Printf("WARNING: failed to load .env from current directory: %v", err)
+	} else {
+		log.Println("INFO: loaded env file from current directory")
 	}
 }
 

@@ -200,3 +200,14 @@ type OpenAIStreamRequest struct {
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 	Stream         bool            `json:"stream"`
 }
+
+// ExperimentLogRequest is the payload for detailed experiment event logging.
+type ExperimentLogRequest struct {
+	UserID        string                 `json:"user_id"`
+	ParticipantID string                 `json:"participant_id"`
+	Role          string                 `json:"role"`
+	SessionID     string                 `json:"session_id"`
+	TaskID        string                 `json:"task_id"`
+	EventType     string                 `json:"event_type"`
+	EventData     map[string]interface{} `json:"event_data"`
+}

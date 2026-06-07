@@ -52,11 +52,12 @@ func Run() {
 	http.Handle("/api/grade", corsMiddleware(http.HandlerFunc(gradeHandler)))
 	http.Handle("/api/memory", corsMiddleware(http.HandlerFunc(getMemoryHandler)))
 	http.Handle("/api/summarize", corsMiddleware(http.HandlerFunc(summarizeHandler)))
+	http.Handle("/api/experiment-log", corsMiddleware(http.HandlerFunc(experimentLogHandler)))
 	http.Handle("/", staticFileHandler())
 
 	log.Println("Go server is listening:")
 	log.Println("  - http://localhost:8088  (HTTP)")
-	log.Println("(API: /api/execute, /api/chat, /api/chat/ws, /api/grade, /api/memory, /api/summarize)")
+	log.Println("(API: /api/execute, /api/chat, /api/chat/ws, /api/grade, /api/memory, /api/summarize, /api/experiment-log)")
 
 	if err := http.ListenAndServe(":8088", nil); err != nil {
 		log.Fatalf("server startup failed: %v", err)

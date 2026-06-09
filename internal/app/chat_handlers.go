@@ -71,7 +71,7 @@ func chatWSHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		log.Printf("[Stream] params=%+v emo=%s", chatRes.Parameters, chatRes.Emotion)
+		//log.Printf("[Stream] params=%+v emo=%s", chatRes.Parameters, chatRes.Emotion)
 
 		chatHistory = append(chatHistory, OpenAIMessage{Role: "user", Content: payload.Message})
 		chatHistory = append(chatHistory, OpenAIMessage{Role: "assistant", Content: chatRes.Text})

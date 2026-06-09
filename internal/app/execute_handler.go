@@ -45,7 +45,7 @@ func executeHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	compileAndRunScript := "g++ -Wall /usr/src/app/main.cpp -o /usr/src/app/main.out && /usr/src/app/main.out"
-	log.Printf("INFO: running Docker C++ execution")
+	//log.Printf("INFO: running Docker C++ execution")
 	runCmd := exec.CommandContext(ctx, "docker", "run",
 		"--rm",
 		"-i",

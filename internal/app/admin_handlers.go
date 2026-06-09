@@ -159,6 +159,7 @@ func adminEventsHandler(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	participantID := strings.TrimSpace(q.Get("participant_id"))
+	userID := strings.TrimSpace(q.Get("user_id"))
 	limit := 500
 	if rawLimit := q.Get("limit"); rawLimit != "" {
 		parsed, err := strconv.Atoi(rawLimit)
@@ -173,6 +174,8 @@ func adminEventsHandler(w http.ResponseWriter, r *http.Request) {
 	builder := supabaseClient.DB.From("experiment_events").Select("*").OrderBy("created_at", "desc").Limit(limit)
 	if participantID != "" {
 		builder.Eq("participant_id", participantID)
+	} else if userID != "" {
+		builder.Eq("user_id", userID)
 	}
 	if eventType := strings.TrimSpace(q.Get("event_type")); eventType != "" {
 		builder.Eq("event_type", eventType)
@@ -327,11 +330,16 @@ func adminDeleteUserHandler(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(req.UserID)
 	participantID := strings.ToUpper(strings.TrimSpace(req.ParticipantID))
 	confirm := strings.ToUpper(strings.TrimSpace(req.Confirm))
-	if userID == "" || participantID == "" {
-		writeJSONError(w, http.StatusBadRequest, "user_id and participant_id are required")
+	if userID == "" {
+		writeJSONError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
-	if confirm != participantID {
+	if participantID == "" {
+		if confirm != "DELETE_INCOMPLETE" {
+			writeJSONError(w, http.StatusBadRequest, "Confirmation must be DELETE_INCOMPLETE for incomplete profiles")
+			return
+		}
+	} else if confirm != participantID {
 		writeJSONError(w, http.StatusBadRequest, "Confirmation does not match participant_id")
 		return
 	}
@@ -346,10 +354,12 @@ func adminDeleteUserHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "Failed at step: experiment_events by user_id")
 		return
 	}
-	if err := deleteByFilter("experiment_events", "participant_id", participantID); err != nil {
-		log.Printf("ERROR: delete user failed at experiment_events participant_id: participant_id=%s err=%v", participantID, err)
-		writeJSONError(w, http.StatusInternalServerError, "Failed at step: experiment_events by participant_id")
-		return
+	if participantID != "" {
+		if err := deleteByFilter("experiment_events", "participant_id", participantID); err != nil {
+			log.Printf("ERROR: delete user failed at experiment_events participant_id: participant_id=%s err=%v", participantID, err)
+			writeJSONError(w, http.StatusInternalServerError, "Failed at step: experiment_events by participant_id")
+			return
+		}
 	}
 	if err := deleteByFilter("profiles", "id", userID); err != nil {
 		log.Printf("ERROR: delete user failed at profiles: user_id=%s err=%v", userID, err)

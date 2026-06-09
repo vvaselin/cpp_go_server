@@ -51,7 +51,7 @@ func gradeHandler(w http.ResponseWriter, r *http.Request) {
 			prev := existing[0]
 			if currentScore > prev.HighScore {
 				isNewRecord = true
-				if currentScore >= 80 && !prev.IsCleared {
+				if currentScore >= 80 {
 					bonusLove = 5
 				}
 				updateData := map[string]interface{}{

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 func experimentLogHandler(w http.ResponseWriter, r *http.Request) {
@@ -60,4 +62,68 @@ func experimentLogHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+type lectureViewEventRow struct {
+	EventData map[string]interface{} `json:"event_data"`
+}
+
+func lectureViewsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	watched := map[string]bool{}
+	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	if userID == "" || supabaseClient == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"watched_lectures": watched})
+		return
+	}
+
+	var rows []lectureViewEventRow
+	err := supabaseClient.DB.From("experiment_events").
+		Select("event_data").
+		Limit(5000).
+		Eq("user_id", userID).
+		Eq("event_type", "lecture_view").
+		Execute(&rows)
+	if err != nil {
+		log.Printf("ERROR: lecture views fetch failed: user_id=%s err=%v", userID, err)
+		json.NewEncoder(w).Encode(map[string]interface{}{"watched_lectures": watched})
+		return
+	}
+
+	for _, row := range rows {
+		if row.EventData == nil {
+			continue
+		}
+		if lectureNum, ok := parseLectureNum(row.EventData["lecture_num"]); ok {
+			watched[strconv.Itoa(lectureNum)] = true
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"watched_lectures": watched})
+}
+
+func parseLectureNum(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case float64:
+		if v >= 1 {
+			return int(v), true
+		}
+	case int:
+		if v >= 1 {
+			return v, true
+		}
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err == nil && n >= 1 {
+			return n, true
+		}
+	}
+	return 0, false
 }

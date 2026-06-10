@@ -53,6 +53,7 @@ func Run() {
 	http.Handle("/api/memory", corsMiddleware(http.HandlerFunc(getMemoryHandler)))
 	http.Handle("/api/summarize", corsMiddleware(http.HandlerFunc(summarizeHandler)))
 	http.Handle("/api/experiment-log", corsMiddleware(http.HandlerFunc(experimentLogHandler)))
+	http.Handle("/api/lecture-views", corsMiddleware(http.HandlerFunc(lectureViewsHandler)))
 	http.Handle("/api/admin/profiles", corsMiddleware(http.HandlerFunc(adminProfilesHandler)))
 	http.Handle("/api/admin/events", corsMiddleware(http.HandlerFunc(adminEventsHandler)))
 	http.Handle("/api/admin/task-progress", corsMiddleware(http.HandlerFunc(adminTaskProgressHandler)))
@@ -65,7 +66,7 @@ func Run() {
 
 	log.Println("Go server is listening:")
 	log.Println("  - http://localhost:8088  (HTTP)")
-	log.Println("(API: /api/execute, /api/chat, /api/chat/ws, /api/grade, /api/memory, /api/summarize, /api/experiment-log, /api/admin/profiles, /api/admin/events, /api/admin/task-progress, admin mutations)")
+	log.Println("(API: /api/execute, /api/chat, /api/chat/ws, /api/grade, /api/memory, /api/summarize, /api/experiment-log, /api/lecture-views, /api/admin/profiles, /api/admin/events, /api/admin/task-progress, admin mutations)")
 
 	if err := http.ListenAndServe(":8088", nil); err != nil {
 		log.Fatalf("server startup failed: %v", err)

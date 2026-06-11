@@ -167,8 +167,12 @@ func adminEventsHandler(w http.ResponseWriter, r *http.Request) {
 			limit = parsed
 		}
 	}
-	if limit > 5000 {
-		limit = 5000
+	maxLimit := 5000
+	if participantID == "" && userID == "" {
+		maxLimit = 200000
+	}
+	if limit > maxLimit {
+		limit = maxLimit
 	}
 
 	builder := supabaseClient.DB.From("experiment_events").Select("*").OrderBy("created_at", "desc").Limit(limit)
@@ -205,11 +209,7 @@ func adminTaskProgressHandler(w http.ResponseWriter, r *http.Request) {
 
 	participantID := strings.TrimSpace(r.URL.Query().Get("participant_id"))
 	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
-	if participantID == "" && userID == "" {
-		writeJSONError(w, http.StatusBadRequest, "participant_id or user_id is required")
-		return
-	}
-	if userID == "" {
+	if participantID != "" && userID == "" {
 		profile, err := fetchAdminProfileByParticipantID(participantID)
 		if err != nil {
 			log.Printf("ERROR: admin profile lookup failed: participant_id=%s err=%v", participantID, err)
@@ -220,7 +220,11 @@ func adminTaskProgressHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []AdminTaskProgressRow
-	if err := supabaseClient.DB.From("task_progress").Select("user_id,task_id,high_score,is_cleared").OrderBy("task_id", "asc").Eq("user_id", userID).Execute(&rows); err != nil {
+	builder := supabaseClient.DB.From("task_progress").Select("user_id,task_id,high_score,is_cleared").OrderBy("task_id", "asc")
+	if userID != "" {
+		builder.Eq("user_id", userID)
+	}
+	if err := builder.Execute(&rows); err != nil {
 		log.Printf("ERROR: admin task_progress fetch failed: user_id=%s err=%v", userID, err)
 		writeJSONError(w, http.StatusInternalServerError, "Failed to fetch task progress")
 		return

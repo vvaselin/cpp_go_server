@@ -2,12 +2,14 @@ package app
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -40,6 +42,14 @@ type AdminTaskProgressRow struct {
 	TaskID    string `json:"task_id"`
 	HighScore int    `json:"high_score"`
 	IsCleared bool   `json:"is_cleared"`
+}
+
+type AdminExperimentDataset struct {
+	Filename    string              `json:"filename"`
+	Columns     []string            `json:"columns"`
+	Rows        []map[string]string `json:"rows"`
+	ByStudentID map[string]int      `json:"by_student_id"`
+	Error       string              `json:"error,omitempty"`
 }
 
 type adminEventSummary struct {
@@ -167,8 +177,12 @@ func adminEventsHandler(w http.ResponseWriter, r *http.Request) {
 			limit = parsed
 		}
 	}
-	if limit > 5000 {
-		limit = 5000
+	maxLimit := 5000
+	if participantID == "" && userID == "" {
+		maxLimit = 200000
+	}
+	if limit > maxLimit {
+		limit = maxLimit
 	}
 
 	builder := supabaseClient.DB.From("experiment_events").Select("*").OrderBy("created_at", "desc").Limit(limit)
@@ -205,11 +219,7 @@ func adminTaskProgressHandler(w http.ResponseWriter, r *http.Request) {
 
 	participantID := strings.TrimSpace(r.URL.Query().Get("participant_id"))
 	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
-	if participantID == "" && userID == "" {
-		writeJSONError(w, http.StatusBadRequest, "participant_id or user_id is required")
-		return
-	}
-	if userID == "" {
+	if participantID != "" && userID == "" {
 		profile, err := fetchAdminProfileByParticipantID(participantID)
 		if err != nil {
 			log.Printf("ERROR: admin profile lookup failed: participant_id=%s err=%v", participantID, err)
@@ -220,12 +230,38 @@ func adminTaskProgressHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []AdminTaskProgressRow
-	if err := supabaseClient.DB.From("task_progress").Select("user_id,task_id,high_score,is_cleared").OrderBy("task_id", "asc").Eq("user_id", userID).Execute(&rows); err != nil {
+	builder := supabaseClient.DB.From("task_progress").Select("user_id,task_id,high_score,is_cleared").OrderBy("task_id", "asc")
+	if userID != "" {
+		builder.Eq("user_id", userID)
+	}
+	if err := builder.Execute(&rows); err != nil {
 		log.Printf("ERROR: admin task_progress fetch failed: user_id=%s err=%v", userID, err)
 		writeJSONError(w, http.StatusInternalServerError, "Failed to fetch task progress")
 		return
 	}
 	writeJSON(w, map[string]interface{}{"task_progress": rows})
+}
+
+func adminExperimentDataHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if !requireMethod(w, r, http.MethodGet) || !requireAdmin(w, r) {
+		return
+	}
+
+	files := map[string]string{
+		"pre_test":                 "事前テスト.csv",
+		"post_test":                "事後テスト.csv",
+		"pre_survey_1":             "事前アンケート①.csv",
+		"pre_survey_2":             "事前アンケート②.csv",
+		"post_survey_control":      "事後アンケート_control.csv",
+		"post_survey_experimental": "事後アンケート_experimental.csv",
+	}
+	baseDir := experimentDataDir()
+	datasets := map[string]AdminExperimentDataset{}
+	for key, filename := range files {
+		datasets[key] = readAdminExperimentDataset(filepath.Join(baseDir, filename), filename)
+	}
+	writeJSON(w, map[string]interface{}{"base_dir": baseDir, "datasets": datasets})
 }
 
 func adminProfileUpdateHandler(w http.ResponseWriter, r *http.Request) {
@@ -404,6 +440,72 @@ func adminResetByRPC(w http.ResponseWriter, r *http.Request, confirmText string,
 		return
 	}
 	writeJSON(w, map[string]interface{}{"status": "success", "result": result})
+}
+
+func experimentDataDir() string {
+	candidates := []string{
+		filepath.Clean("../experiment_data"),
+		filepath.Clean("experiment_data"),
+		filepath.Clean("../../experiment_data"),
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			if abs, err := filepath.Abs(candidate); err == nil {
+				return abs
+			}
+			return candidate
+		}
+	}
+	if abs, err := filepath.Abs("../experiment_data"); err == nil {
+		return abs
+	}
+	return "../experiment_data"
+}
+
+func readAdminExperimentDataset(path string, filename string) AdminExperimentDataset {
+	dataset := AdminExperimentDataset{
+		Filename:    filename,
+		Columns:     []string{},
+		Rows:        []map[string]string{},
+		ByStudentID: map[string]int{},
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		dataset.Error = err.Error()
+		return dataset
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	reader.FieldsPerRecord = -1
+	records, err := reader.ReadAll()
+	if err != nil {
+		dataset.Error = err.Error()
+		return dataset
+	}
+	if len(records) == 0 {
+		return dataset
+	}
+	dataset.Columns = records[0]
+	for i, record := range records[1:] {
+		row := map[string]string{}
+		for colIndex, column := range dataset.Columns {
+			value := ""
+			if colIndex < len(record) {
+				value = record[colIndex]
+			}
+			row[column] = value
+		}
+		dataset.Rows = append(dataset.Rows, row)
+		if studentID := normalizeAdminStudentID(row["学籍番号"]); studentID != "" {
+			dataset.ByStudentID[studentID] = i
+		}
+	}
+	return dataset
+}
+
+func normalizeAdminStudentID(value string) string {
+	return strings.ToUpper(strings.TrimSpace(value))
 }
 
 func fetchAdminProfileByParticipantID(participantID string) (*UserProfile, error) {

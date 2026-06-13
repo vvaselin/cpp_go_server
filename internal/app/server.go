@@ -57,6 +57,7 @@ func Run() {
 	http.Handle("/api/admin/profiles", corsMiddleware(http.HandlerFunc(adminProfilesHandler)))
 	http.Handle("/api/admin/events", corsMiddleware(http.HandlerFunc(adminEventsHandler)))
 	http.Handle("/api/admin/task-progress", corsMiddleware(http.HandlerFunc(adminTaskProgressHandler)))
+	http.Handle("/api/admin/experiment-data", corsMiddleware(http.HandlerFunc(adminExperimentDataHandler)))
 	http.Handle("/api/admin/profile/update", corsMiddleware(http.HandlerFunc(adminProfileUpdateHandler)))
 	http.Handle("/api/admin/task-progress/update", corsMiddleware(http.HandlerFunc(adminTaskProgressUpdateHandler)))
 	http.Handle("/api/admin/user/delete", corsMiddleware(http.HandlerFunc(adminDeleteUserHandler)))
@@ -66,7 +67,7 @@ func Run() {
 
 	log.Println("Go server is listening:")
 	log.Println("  - http://localhost:8088  (HTTP)")
-	log.Println("(API: /api/execute, /api/chat, /api/chat/ws, /api/grade, /api/memory, /api/summarize, /api/experiment-log, /api/lecture-views, /api/admin/profiles, /api/admin/events, /api/admin/task-progress, admin mutations)")
+	log.Println("(API: /api/execute, /api/chat, /api/chat/ws, /api/grade, /api/memory, /api/summarize, /api/experiment-log, /api/lecture-views, /api/admin/profiles, /api/admin/events, /api/admin/task-progress, /api/admin/experiment-data, admin mutations)")
 
 	if err := http.ListenAndServe(":8088", nil); err != nil {
 		log.Fatalf("server startup failed: %v", err)
